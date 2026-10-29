@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>投票管理 - 零知识密封加权评审系统</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="zk-utils.js"></script>
+    <script src="app-shell.js" defer></script>
+</head>
+<body>
+    <div class="page-header">
+        <h1 class="page-title">评审管理</h1>
+        <p class="page-desc">推进评审阶段、监控参与进度并处理中断恢复</p>
+    </div>
+
+    <div id="loading" class="card">
+        <div class="loading">加载管理面板...</div>
+    </div>
+
+        <div id="errorMessage" class="card" style="display: none;">
+            <div class="status error">
+                <h3>加载失败</h3>
+                <p id="errorText"></p>
+                <button class="btn" onclick="window.location.href='dashboard.html'">返回仪表板</button>
+            </div>
+        </div>
+
+        <div id="adminContent" style="display: none;">
+            <!-- 投票概览 -->
+            <div class="card">
+                <h2 id="adminTitle"></h2>
+                <p id="adminDescription" class="voting-description"></p>
+                <div class="admin-meta">
+                    <span class="phase-badge" id="adminPhase">准备中</span>
+                    <span class="voting-id">投票ID: <code id="adminVotingId"></code></span>
+                    <span class="created-time">创建时间: <span id="adminCreatedTime"></span></span>
+                </div>
+            </div>
+
+            <!-- 管理操作 -->
+            <div class="card">
+                <h3>阶段管理</h3>
+                <div class="phase-controls">
+                    <button class="btn" id="startCommitBtn" onclick="startCommitPhase()">开始承诺阶段</button>
+                    <button class="btn" id="startVotingBtn" onclick="startVotingPhase()">开始评分阶段</button>
+                    <button class="btn" id="endVotingBtn" onclick="endVotingPhase()">结束投票并公布结果</button>
+                </div>
+                
+                <div class="phase-info">
+                    <p><strong>当前阶段:</strong> <span id="currentPhaseText">准备中</span></p>
+                    <p><strong>下一阶段:</strong> <span id="nextPhaseText">承诺阶段</span></p>
+                    <p><strong>承诺阶段时长:</strong> <span id="commitDuration">24</span> 小时</p>
+                    <p><strong>评分阶段时长:</strong> <span id="scoreDuration">48</span> 小时</p>
+                </div>
+            </div>
+
+            <!-- 实时统计 -->
+            <div class="card">
+                <h3>实时统计</h3>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-number" id="statCommitments">0</div>
+                        <div class="stat-label">承诺提交</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="statVotes">0</div>
+                        <div class="stat-label">投票完成</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="statCandidates">0</div>
+                        <div class="stat-label">候选人</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="statParticipationRate">0%</div>
+                        <div class="stat-label">参与率</div>
+                    </div>
+                </div>
+
+                <div class="progress-section">
+                    <h4>活动进度</h4>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="overallProgress" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">0% 完成</div>
+                </div>
+            </div>
+
+            <!-- 参与者状态 -->
+            <div class="card">
+                <h3>参与者状态</h3>
+                <div class="participants-section">
+                    <!-- 评分者状态 -->
+                    <div class="participants-column">
+                        <div class="participants-header">
+                            <h4>评分者状态</h4>
+                            <span class="participants-count" id="votersCount">0 人</span>
+                        </div>
+                        <div class="participants-stats">
+                            <div class="stat-badge completed">
+                                <span class="stat-number" id="completedVoters">0</span>
+                                <span class="stat-label">已完成</span>
+                            </div>
+                            <div class="stat-badge committed">
+                                <span class="stat-number" id="committedVoters">0</span>
+                                <span class="stat-label">已承诺</span>
+                            </div>
+                            <div class="stat-badge pending">
+                                <span class="stat-number" id="pendingVoters">0</span>
+                                <span class="stat-label">待参与</span>
+                            </div>
+                        </div>
+                        <div class="participants-list" id="votersList">
+                            <!-- 评分者列表将通过JS动态生成 -->
+                        </div>
+                    </div>
+
+                    <!-- 候选人状态 -->
+                    <div class="participants-column">
+                        <div class="participants-header">
+                            <h4>候选人状态</h4>
+                            <span class="participants-count" id="candidatesCount">0 人</span>
+                        </div>
+                        <div class="participants-stats">
+                            <div class="stat-badge scored">
+                                <span class="stat-number" id="totalScores">0</span>
+                                <span class="stat-label">总评分</span>
+                            </div>
+                            <div class="stat-badge avg-score">
+                                <span class="stat-number" id="avgScore">0.0</span>
+                                <span class="stat-label">平均分</span>
+                            </div>
+                        </div>
+                        <div class="participants-list" id="candidatesList">
+                            <!-- 候选人列表将通过JS动态生成 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 中断恢复（v2：只读提示，不再提供代填入口） -->
+            <div class="card" id="recoverySection" style="display: none;">
+                <h3>未完成评分</h3>
+                <div class="recovery-info">
+                    <div class="status warning">
+                        <h4>以下评分者已提交承诺但尚未揭晓</h4>
+                        <p>协议 v2 不提供代他人写分的入口：请通知该评分者登录后自行完成揭晓，以保证其评分的保密性与不可伪造性。</p>
+                    </div>
+                    <div id="missingVotersList" class="missing-voters-list"></div>
+                </div>
+            </div>
+
+            <!-- 快速操作 -->
+            <div class="card">
+                <h3>快速操作</h3>
+                <div class="action-buttons">
+                    <button class="btn" onclick="refreshAdmin()">刷新状态</button>
+                    <button class="btn btn-secondary" onclick="viewVotingResults()">查看结果</button>
+                    <button class="btn btn-danger" onclick="deleteCurrentVoting()">删除活动</button>
+                    <button class="btn btn-secondary" onclick="window.location.href='dashboard.html'">返回仪表板</button>
+                </div>
+            </div>
+        </div>
+
+    <script>
+        let currentVotingId = null;
+        let currentVotingData = null;
+        let currentUser = null;
+
+        // 阶段常量 - 统一前后端阶段定义
+        const VOTING_PHASES = {
+            COMMIT: 'commit',
+            SCORING: 'scoring',
+            COMPLETED: 'completed',
+            CANCELLED: 'cancelled'
+        };
+
+        // 阶段显示名称映射
+        const PHASE_DISPLAY_NAMES = {
+            'commit': '承诺阶段',
+            'scoring': '评分阶段',
+            'completed': '已完成',
+            'cancelled': '已取消'
+        };
+
+        // 获取阶段显示名称
+        function getPhaseDisplayName(phase) {
+            return PHASE_DISPLAY_NAMES[phase] || phase;
+        }
+
+        // 获取URL参数
+        function getUrlParams() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('id');
+        }
+
+        // 检查权限
+        async function checkPublisherAuth() {
+            if (!ZKUtils.isLoggedIn()) {
+                window.location.href = 'index.html';
+                return false;
+            }
+
+            try {
+                const result = await ZKUtils.getCurrentUser();
+                if (result.success) {
+                    currentUser = result.data;
+                    if (currentUser.role !== 'publisher') {
+                        showError('只有活动发布者可以访问管理页面！');
+                        return false;
+                    }
+                    return true;
+                } else {
+                    ZKUtils.removeAuthToken();
+                    window.location.href = 'index.html';
+                    return false;
+                }
+            } catch (error) {
+                ZKUtils.removeAuthToken();
+                window.location.href = 'index.html';
+                return false;
+            }
+        }
+
+        // 显示错误信息
+        function showError(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('errorMessage').style.display = 'block';
+            document.getElementById('errorText').textContent = message;
+        }
+
+        // 加载管理面板
+        async function loadAdminPanel() {
+            if (!await checkPublisherAuth()) return;
+
+            currentVotingId = getUrlParams();
+            if (!currentVotingId) {
+                showError('未指定投票活动ID');
+                return;
+            }
+
+            try {
+                const result = await ZKUtils.getVotingById(currentVotingId);
+                if (result.success) {
+                    currentVotingData = result.data;
+                    
+                    // 验证当前用户是否是创建者
+                    if (currentVotingData.creator_id !== currentUser.id) {
+                        showError('您只能管理自己创建的投票活动！');
+                        return;
+                    }
+                    
+                    displayAdminPanel();
+                } else {
+                    showError('投票活动不存在: ' + result.message);
+                }
+            } catch (error) {
+                console.error('加载管理面板错误:', error);
+                showError('加载失败: ' + error.message);
+            }
+        }
+
+        // 显示管理面板
+        function displayAdminPanel() {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('errorMessage').style.display = 'none';
+            document.getElementById('adminContent').style.display = 'block';
+
+            // 基础信息
+            document.getElementById('adminTitle').textContent = currentVotingData.title;
+            document.getElementById('adminDescription').textContent = currentVotingData.description || '暂无描述';
+            document.getElementById('adminVotingId').textContent = currentVotingData.id;
+            document.getElementById('adminCreatedTime').textContent = 
+                ZKUtils.formatDate(currentVotingData.created_at);
+            document.getElementById('commitDuration').textContent = currentVotingData.commit_duration;
+            document.getElementById('scoreDuration').textContent = currentVotingData.score_duration;
+
+            // 更新统计和状态
+            updateAdminStats();
+            updatePhaseControls();
+            updateParticipantsList();
+            checkMissingVoters();
+        }
+
+        // 更新管理统计
+        function updateAdminStats() {
+            const commitmentsCount = currentVotingData.commitments ? currentVotingData.commitments.length : 0;
+            const totalVotes = currentVotingData.scores ? currentVotingData.scores.length : 0;
+            const totalVoters = currentVotingData.voters ? currentVotingData.voters.length : 0;
+            const totalCandidates = currentVotingData.candidates ? currentVotingData.candidates.length : 0;
+            const totalPossibleVotes = totalVoters * totalCandidates;
+            const votesCount = totalPossibleVotes > 0 ? Math.round((totalVotes / totalPossibleVotes) * 100) : 0;
+            const participationRate = totalVoters > 0 ? 
+                Math.round((commitmentsCount / totalVoters) * 100) : 0;
+
+            document.getElementById('statCommitments').textContent = commitmentsCount;
+            document.getElementById('statVotes').textContent = totalVotes;
+            document.getElementById('statCandidates').textContent = totalCandidates;
+            document.getElementById('statParticipationRate').textContent = participationRate + '%';
+
+            // 更新进度条
+            const progress = calculateProgress();
+            document.getElementById('overallProgress').style.width = progress + '%';
+            document.getElementById('progressText').textContent = progress + '% 完成';
+        }
+
+        // 计算总体进度
+        function calculateProgress() {
+            const totalVoters = currentVotingData.voters ? currentVotingData.voters.length : 0;
+            const totalCandidates = currentVotingData.candidates ? currentVotingData.candidates.length : 0;
+            
+            if (totalVoters === 0 || totalCandidates === 0) return 0;
+            
+            const commitmentsCount = currentVotingData.commitments ? currentVotingData.commitments.length : 0;
+            const scoresCount = currentVotingData.scores ? currentVotingData.scores.length : 0;
+            
+            const commitmentProgress = (commitmentsCount / totalVoters) * 40;
+            const scoringProgress = (scoresCount / (totalVoters * totalCandidates)) * 60;
+            
+            return Math.min(Math.round(commitmentProgress + scoringProgress), 100);
+        }
+
+        // 更新阶段控制
+        function updatePhaseControls() {
+            const phase = currentVotingData.phase;
+            const phaseTexts = {
+                'commit': { current: '承诺阶段', next: '评分阶段' },
+                'scoring': { current: '评分阶段', next: '结果公布' },
+                'completed': { current: '已完成', next: '已结束' }
+            };
+
+            const phaseText = phaseTexts[phase] || { current: '准备中', next: '承诺阶段' };
+            
+            document.getElementById('adminPhase').textContent = phaseText.current;
+            document.getElementById('adminPhase').className = `phase-badge ${phase}`;
+            document.getElementById('currentPhaseText').textContent = phaseText.current;
+            document.getElementById('nextPhaseText').textContent = phaseText.next;
+
+            // 修复按钮状态逻辑
+            const startCommitBtn = document.getElementById('startCommitBtn');
+            const startVotingBtn = document.getElementById('startVotingBtn');
+            const endVotingBtn = document.getElementById('endVotingBtn');
+
+            // 重置所有按钮状态
+            startCommitBtn.disabled = false;
+            startVotingBtn.disabled = false;
+            endVotingBtn.disabled = false;
+
+            // 根据当前阶段禁用相应按钮
+            if (phase === VOTING_PHASES.COMMIT) {
+                startCommitBtn.disabled = true;
+            } else if (phase === VOTING_PHASES.SCORING) {
+                startVotingBtn.disabled = true;
+            } else if (phase === VOTING_PHASES.COMPLETED) {
+                endVotingBtn.disabled = true;
+            }
+        }
+
+        // 更新参与者列表
+        function updateParticipantsList() {
+            const voters = currentVotingData.voters || [];
+            const candidates = currentVotingData.candidates || [];
+            const commitments = currentVotingData.commitments || [];
+            const scores = currentVotingData.scores || [];
+
+            // 更新评分者统计
+            let completedCount = 0;
+            let committedCount = 0;
+            let pendingCount = 0;
+
+            voters.forEach(voter => {
+                const hasCommitted = commitments.some(c => c.voter_id === voter.id);
+                const hasScored = scores.some(s => s.voter_id === voter.id);
+                
+                if (hasScored) {
+                    completedCount++;
+                } else if (hasCommitted) {
+                    committedCount++;
+                } else {
+                    pendingCount++;
+                }
+            });
+
+            document.getElementById('votersCount').textContent = `${voters.length} 人`;
+            document.getElementById('completedVoters').textContent = completedCount;
+            document.getElementById('committedVoters').textContent = committedCount;
+            document.getElementById('pendingVoters').textContent = pendingCount;
+
+            // 更新候选人统计
+            let totalScoreCount = 0;
+            let totalScoreSum = 0;
+
+            candidates.forEach(candidate => {
+                const candidateScores = scores.filter(s => s.candidate_id === candidate.id);
+                totalScoreCount += candidateScores.length;
+                totalScoreSum += candidateScores.reduce((sum, score) => sum + (score.score || 0), 0);
+            });
+
+            const avgScore = totalScoreCount > 0 ? (totalScoreSum / totalScoreCount).toFixed(1) : '0.0';
+
+            document.getElementById('candidatesCount').textContent = `${candidates.length} 人`;
+            document.getElementById('totalScores').textContent = totalScoreCount;
+            document.getElementById('avgScore').textContent = avgScore;
+
+            // 更新评分者列表
+            const votersContainer = document.getElementById('votersList');
+            if (voters.length > 0) {
+                votersContainer.innerHTML = voters.map(voter => {
+                    const hasCommitted = commitments.some(c => c.voter_id === voter.id);
+                    const hasScored = scores.some(s => s.voter_id === voter.id);
+
+                    let status = '待参与';
+                    let statusClass = 'pending';
+                    if (hasScored) {
+                        status = '已完成';
+                        statusClass = 'completed';
+                    } else if (hasCommitted) {
+                        status = '已承诺';
+                        statusClass = 'committed';
+                    }
+
+                    return `
+                        <div class="participant-item ${statusClass}">
+                            <div class="participant-avatar">
+                                <div class="avatar-icon">${voter.username.charAt(0).toUpperCase()}</div>
+                            </div>
+                            <div class="participant-info">
+                                <div class="participant-name">${voter.username}</div>
+                                <div class="participant-details">
+                                    <span class="participant-status ${statusClass}">${status}</span>
+                                    <span class="participant-weight">权重 ${voter.weight}</span>
+                                </div>
+                            </div>
+                            <div class="participant-actions">
+                                <div class="status-indicator ${statusClass}"></div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                votersContainer.innerHTML = `
+                    <div class="no-participants">
+                        <div class="no-data-icon">
+                            <svg class="icon icon-lg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"></circle><path d="M3 20a6 6 0 0 1 12 0"></path><path d="M16 6.5a3 3 0 0 1 0 5.9M18 20a6 6 0 0 0-3-5.2"></path></svg>
+                        </div>
+                        <p>暂无评分者</p>
+                    </div>
+                `;
+            }
+
+            // 更新候选人列表
+            const candidatesContainer = document.getElementById('candidatesList');
+            if (candidates.length > 0) {
+                candidatesContainer.innerHTML = candidates.map(candidate => {
+                    const candidateScores = scores.filter(s => s.candidate_id === candidate.id);
+                    const scoreCount = candidateScores.length;
+                    const avgScore = scoreCount > 0 ? 
+                        (candidateScores.reduce((sum, score) => sum + (score.score || 0), 0) / scoreCount).toFixed(1) : '0.0';
+                    
+                    return `
+                        <div class="participant-item candidate">
+                            <div class="participant-avatar">
+                                <div class="avatar-icon candidate-avatar">${candidate.name.charAt(0).toUpperCase()}</div>
+                            </div>
+                            <div class="participant-info">
+                                <div class="participant-name">${candidate.name}</div>
+                                <div class="participant-details">
+                                    <span class="score-count">${scoreCount} 次评分</span>
+                                    <span class="avg-score">平均 ${avgScore} 分</span>
+                                </div>
+                            </div>
+                            <div class="participant-actions">
+                                <div class="score-indicator">
+                                    <span class="score-badge">${scoreCount}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                candidatesContainer.innerHTML = `
+                    <div class="no-participants">
+                        <div class="no-data-icon">
+                            <svg class="icon icon-lg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+                        </div>
+                        <p>暂无候选人</p>
+                    </div>
+                `;
+            }
+        }
+
+        // 检查缺失投票者
+        function checkMissingVoters() {
+            if (currentVotingData.phase !== VOTING_PHASES.SCORING) {
+                document.getElementById('recoverySection').style.display = 'none';
+                return;
+            }
+
+            if (!currentVotingData.commitments || !currentVotingData.scores) {
+                document.getElementById('recoverySection').style.display = 'none';
+                return;
+            }
+
+            const committedVoters = new Set(currentVotingData.commitments.map(c => c.voter_id));
+            const scoredVoters = new Set(currentVotingData.scores.map(s => s.voter_id));
+            const missingVoters = currentVotingData.voters.filter(voter => 
+                committedVoters.has(voter.id) && !scoredVoters.has(voter.id)
+            );
+
+            if (missingVoters.length > 0) {
+                document.getElementById('recoverySection').style.display = 'block';
+                const container = document.getElementById('missingVotersList');
+                container.innerHTML = missingVoters.map(voter => `
+                    <div class="missing-voter-item">
+                        <div class="missing-voter-avatar">
+                            <div class="avatar-icon warning">${voter.username.charAt(0).toUpperCase()}</div>
+                        </div>
+                        <div class="missing-voter-info">
+                            <div class="missing-voter-name">${voter.username}</div>
+                            <div class="missing-voter-details">已提交承诺但未完成评分</div>
+                        </div>
+                        <div class="missing-voter-weight">权重 ${voter.weight}</div>
+                    </div>
+                `).join('');
+            } else {
+                document.getElementById('recoverySection').style.display = 'none';
+            }
+        }
+
+        // 阶段控制函数 - 修复后的版本
+        async function startCommitPhase() {
+            try {
+                const result = await ZKUtils.updateVotingPhase(currentVotingData.id, VOTING_PHASES.COMMIT);
+                if (result.success) {
+                    currentVotingData = result.data;
+                    updatePhaseControls();
+                    ZKUtils.showNotification('已开始承诺阶段', 'success');
+                }
+            } catch (error) {
+                ZKUtils.showNotification('操作失败: ' + error.message, 'error');
+            }
+        }
+
+        async function startVotingPhase() {
+            if (!currentVotingData.commitments || currentVotingData.commitments.length === 0) {
+                ZKUtils.showNotification('至少需要一名参与者提交承诺才能开始评分阶段', 'warning');
+                return;
+            }
+            
+            try {
+                const result = await ZKUtils.updateVotingPhase(currentVotingData.id, VOTING_PHASES.SCORING);
+                if (result.success) {
+                    currentVotingData = result.data;
+                    updatePhaseControls();
+                    ZKUtils.showNotification('已开始评分阶段', 'success');
+                }
+            } catch (error) {
+                ZKUtils.showNotification('操作失败: ' + error.message, 'error');
+            }
+        }
+
+        async function endVotingPhase() {
+            try {
+                // 修复：使用 VOTING_PHASES.COMPLETED 而不是 'results'
+                const result = await ZKUtils.updateVotingPhase(currentVotingData.id, VOTING_PHASES.COMPLETED);
+                if (result.success) {
+                    currentVotingData = result.data;
+                    updatePhaseControls();
+                    ZKUtils.showNotification('投票已结束，结果已公布', 'success');
+                }
+            } catch (error) {
+                ZKUtils.showNotification('操作失败: ' + error.message, 'error');
+            }
+        }
+
+        // 查看投票结果
+        function viewVotingResults() {
+            window.location.href = `results.html?id=${currentVotingData.id}`;
+        }
+
+        // 删除当前投票活动
+        async function deleteCurrentVoting() {
+            if (!confirm(`确定要删除投票活动 "${currentVotingData.title}" 吗？此操作不可恢复！`)) {
+                return;
+            }
+
+            try {
+                const result = await ZKUtils.deleteVoting(currentVotingData.id);
+                if (result.success) {
+                    ZKUtils.showNotification('投票活动删除成功', 'success');
+                    setTimeout(() => {
+                        window.location.href = 'dashboard.html';
+                    }, 1000);
+                } else {
+                    ZKUtils.showNotification('删除失败: ' + result.message, 'error');
+                }
+            } catch (error) {
+                ZKUtils.showNotification('删除失败: ' + error.message, 'error');
+            }
+        }
+
+        // 刷新管理面板
+        async function refreshAdmin() {
+            try {
+                const result = await ZKUtils.getVotingById(currentVotingData.id);
+                if (result.success) {
+                    currentVotingData = result.data;
+                    displayAdminPanel();
+                    ZKUtils.showNotification('状态已刷新', 'info');
+                }
+            } catch (error) {
+                ZKUtils.showNotification('刷新失败: ' + error.message, 'error');
+            }
+        }
+
+        // 页面加载
+        window.addEventListener('load', loadAdminPanel);
+
+        // 自动刷新（每30秒）
+        setInterval(() => {
+            if (currentVotingData && currentVotingData.phase !== VOTING_PHASES.COMPLETED) {
+                refreshAdmin();
+            }
+        }, 30000);
+    </script>
+</body>
+</html>

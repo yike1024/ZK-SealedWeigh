@@ -1,0 +1,1141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>恢复中心 - 零知识密封加权评审系统</title>
+    <link rel="stylesheet" href="style.css">
+    <script>
+        // 仅当 URL 带 ?devwallet 时加载本地开发钱包（Hardhat 已解锁账户）
+        (function () {
+            if (new URLSearchParams(window.location.search).get('devwallet')) {
+                document.write('<script src="dev-wallet.js"><\/script>');
+            }
+        })();
+    </script>
+    <script src="zk-utils.js"></script>
+    <script src="zk-wallet.js"></script>
+    <script src="recovery-crypto.js"></script>
+    <script src="recovery-manifest.js"></script>
+    <script src="recovery-key-store.js"></script>
+    <script src="app-shell.js" defer></script>
+</head>
+<body>
+    <div class="page-header">
+        <h1 class="page-title">恢复中心</h1>
+        <p class="page-desc">门限恢复：份额只加密给其他评委，服务器只保存密文，本地重构后才得到明文</p>
+    </div>
+
+    <div id="devWalletBadge" class="alert is-warn" style="display: none; margin-bottom: 16px;"></div>
+
+    <div id="loading" class="card">
+        <div class="loading">加载恢复配置...</div>
+    </div>
+
+    <div id="errorMessage" class="card" style="display: none;">
+        <div class="status error">
+            <h3>加载失败</h3>
+            <p id="errorText"></p>
+            <button class="btn btn-small btn-secondary" type="button"
+                    onclick="window.location.reload()">重新加载</button>
+        </div>
+    </div>
+
+    <div id="recoveryHub" style="display: none;"></div>
+
+    <div id="recoveryContent" style="display: none;">
+        <div class="card">
+            <div class="card-head">
+                <h2 id="votingTitle"></h2>
+                <span class="phase-badge" id="currentPhase"></span>
+            </div>
+            <p id="votingDescription" class="voting-description"></p>
+            <div class="weight-meta">
+                <span>评委: <strong id="voterCount">0</strong></span>
+                <span>您的钱包: <code id="walletAddress">未绑定</code></span>
+                <span>本地私钥: <strong id="localKeyState">未生成</strong></span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-head"><h3>评委恢复状态</h3></div>
+            <table class="table">
+                <thead>
+                    <tr><th>评委</th><th>公钥</th><th>恢复材料</th><th>门限</th></tr>
+                </thead>
+                <tbody id="statusTableBody"></tbody>
+            </table>
+            <p class="field-hint" id="recoveryHint"></p>
+        </div>
+
+        <div class="card wizard">
+            <div class="card-head">
+                <h3>恢复流程</h3>
+                <span class="field-hint" id="wizardHint" role="status" aria-live="polite"></span>
+            </div>
+            <div class="wizard-track" aria-hidden="true"><span id="wizardTrackFill"></span></div>
+            <div class="steps wizard-steps" role="tablist" aria-label="恢复流程步骤">
+                <button type="button" class="step is-current" id="stepTab1" data-step="1"
+                        role="tab" aria-selected="true" aria-controls="stepPanel1">
+                    <span class="step-num">1</span><span>恢复准备</span>
+                </button>
+                <span class="step-sep" aria-hidden="true"></span>
+                <button type="button" class="step is-todo" id="stepTab2" data-step="2"
+                        role="tab" aria-selected="false" aria-controls="stepPanel2">
+                    <span class="step-num">2</span><span>我需要恢复</span>
+                </button>
+                <span class="step-sep" aria-hidden="true"></span>
+                <button type="button" class="step is-todo" id="stepTab3" data-step="3"
+                        role="tab" aria-selected="false" aria-controls="stepPanel3">
+                    <span class="step-num">3</span><span>协助他人恢复</span>
+                </button>
+            </div>
+
+            <div class="wizard-panels">
+                <section class="wizard-panel is-active" id="stepPanel1" data-panel="1"
+                         role="tabpanel" aria-labelledby="stepTab1" aria-label="恢复准备">
+                    <h4>恢复准备</h4>
+                    <div class="scoring-instructions">
+                        <p>生成 ECDH P-256 密钥对，用钱包派生密钥加密后保存在本浏览器；再把评分材料加密托管、份额逐个加密给其他评委。</p>
+                        <p><strong>注意:</strong> 份额不会发给自己——丢失浏览器时自己的那份也一起丢失。</p>
+                    </div>
+                    <div class="field">
+                        <label for="thresholdSelect">门限 k（需要几位其他评委协作）</label>
+                        <select class="input" id="thresholdSelect"></select>
+                        <small class="field-hint" id="thresholdHint"></small>
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn btn-secondary" onclick="generateAndPublishKey()" id="publishKeyBtn">
+                            <span id="publishKeyText">生成并发布恢复公钥</span>
+                        </button>
+                        <button class="btn" onclick="enrollRecovery()" id="enrollBtn">
+                            <span id="enrollText">登记恢复材料</span>
+                        </button>
+                    </div>
+                    <div id="prepareResult" style="display: none; margin-top: 16px;"></div>
+                </section>
+
+                <section class="wizard-panel" id="stepPanel2" data-panel="2"
+                         role="tabpanel" aria-labelledby="stepTab2" aria-label="我需要恢复">
+                    <h4>我需要恢复</h4>
+                    <div id="step2Gate" class="alert is-warn" style="display: none;">
+                        <p>尚未登记恢复材料，无法发起恢复。请先完成第 1 步。</p>
+                        <button class="btn btn-small btn-secondary" type="button"
+                                onclick="goStep(1, { animate: true })">返回第 1 步</button>
+                    </div>
+                    <div id="step2Body">
+                        <div class="scoring-instructions">
+                            <p>发起请求后，其他评委会在“协助恢复”区域投递用你的公钥重新加密的份额。收齐 k 份后在本浏览器重构，明文不会上传。</p>
+                            <p>本页在收集未满时会每 8 秒自动刷新进度，无需手动刷新。</p>
+                        </div>
+                        <div class="form-actions">
+                            <button class="btn btn-secondary" onclick="createRecoveryRequest()" id="requestBtn">创建 / 刷新恢复请求</button>
+                            <button class="btn btn-success" onclick="collectAndRecover()" id="recoverBtn">读取份额并本地重构</button>
+                        </div>
+                        <div id="requestState" class="status info" aria-live="polite"
+                             style="display: none; margin-top: 16px;"></div>
+                        <div id="recoveredPanel" aria-live="polite"
+                             style="display: none; margin-top: 16px;"></div>
+                    </div>
+                </section>
+
+                <section class="wizard-panel" id="stepPanel3" data-panel="3"
+                         role="tabpanel" aria-labelledby="stepTab3" aria-label="协助他人恢复">
+                    <h4>协助他人恢复</h4>
+                    <div class="wizard-panel-head">
+                        <p class="field-hint">解开请求者发给你的份额，用请求者的公钥重新加密后投递。投递内容只有密文，服务器无法解开。</p>
+                        <button class="btn btn-small btn-secondary" type="button" onclick="loadAssistList()">刷新列表</button>
+                    </div>
+                    <div id="assistList" aria-live="polite"><div class="loading">加载恢复请求...</div></div>
+                </section>
+            </div>
+
+            <div class="wizard-nav">
+                <button class="btn btn-ghost" type="button" id="prevStepBtn"
+                        onclick="goStep(currentStep - 1, { animate: true })">上一步</button>
+                <button class="btn btn-secondary" type="button" id="nextStepBtn"
+                        onclick="goStep(currentStep + 1, { animate: true })">下一步</button>
+            </div>
+        </div>
+
+        <div class="card" id="historyCard">
+            <div class="card-head">
+                <h3>恢复记录</h3>
+                <div class="form-actions">
+                    <button class="btn btn-small btn-ghost" type="button"
+                            onclick="exportRecoveryHistory('json')">导出 JSON</button>
+                    <button class="btn btn-small btn-ghost" type="button"
+                            onclick="exportRecoveryHistory('csv')">导出 CSV</button>
+                    <button class="btn btn-small btn-secondary" type="button"
+                            onclick="loadRecoveryHistory()">刷新记录</button>
+                </div>
+            </div>
+            <p class="field-hint" id="historyExportState" role="status" aria-live="polite"></p>
+            <div id="recoveryHistory" aria-live="polite">
+                <div class="loading">加载恢复记录...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let votingId = null;
+        let voting = null;
+        let currentUser = null;
+        let walletAddress = '';
+        let keysData = null;
+        let statusData = null;
+        let myEnrollment = null;
+        let currentRequest = null;
+        let recoveredPayload = null;
+        let currentStep = 1;
+        let assistedCount = 0;
+        let pollTimer = null;
+        let hasLocalKey = false;
+        let historyCache = null;
+
+        const MANIFEST_SCHEMA = 'ZK-SealedWeigh.recovery.manifest.v1';
+        const SHARE_SCHEMA = 'ZK-SealedWeigh.recovery.share.v1';
+        const STEP_LABELS = { 1: '恢复准备', 2: '我需要恢复', 3: '协助他人恢复' };
+
+        function api(path, options) {
+            return ZKUtils.apiCall(path, options || {});
+        }
+
+        async function signMessage(message) {
+            if (!window.ethereum) throw new Error('未检测到以太坊钱包');
+            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+            if (!accounts || !accounts.length) throw new Error('钱包未连接');
+            if (walletAddress &&
+                accounts[0].toLowerCase() !== String(walletAddress).toLowerCase()) {
+                throw new Error('当前钱包账户与登录账号不一致');
+            }
+            return RecoveryKeyStore.personalSign(message, window.ethereum, walletAddress);
+        }
+
+        function notify(message, type) {
+            ZKUtils.showNotification(message, type || 'info');
+        }
+
+        function shortAddress(address) {
+            if (!address) return '未绑定';
+            return address.slice(0, 6) + '…' + address.slice(-4);
+        }
+
+        async function loadPage() {
+            if (!ZKUtils.isLoggedIn()) {
+                window.location.href = 'index.html';
+                return;
+            }
+
+            const params = new URLSearchParams(window.location.search);
+            votingId = params.get('id');
+            if (!votingId) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('recoveryHub').style.display = 'block';
+                await renderRecoveryHub();
+                return;
+            }
+
+            try {
+                const userResult = await ZKUtils.getCurrentUser();
+                currentUser = userResult.data;
+                walletAddress = currentUser.wallet_address || '';
+
+                const votingResult = await ZKUtils.getVotingById(votingId);
+                voting = votingResult.data;
+
+                await refreshAll();
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('recoveryContent').style.display = 'block';
+
+                // 断点续做：优先恢复 URL 里的步骤，否则按是否已登记自动落到第 2 步
+                const hashStep = /^#step([1-3])$/.exec(window.location.hash);
+                goStep(hashStep ? Number(hashStep[1]) : (myEnrollment ? 2 : 1),
+                       { animate: false });
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        function escapeHtml(value) {
+            return String(value === null || value === undefined ? '' : value)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        /* ---------------- 全局恢复中心（P3.11） ---------------- */
+
+        async function renderRecoveryHub() {
+            const hub = document.getElementById('recoveryHub');
+            hub.innerHTML = '<div class="card"><div class="loading">加载恢复总览...</div></div>';
+            try {
+                const result = await api('/recovery/overview');
+                const data = (result && result.data) || {};
+                const activities = data.activities || [];
+                const pending = Number(data.pendingAssist) || 0;
+                const open = Number(data.myOpenRequests) || 0;
+                const enrolled = Number(data.enrolledCount) || 0;
+                const active = Number(data.activeVotingCount) || 0;
+
+                const rows = activities.map(item => {
+                    const title = escapeHtml(item.title);
+                    const phaseNames = {
+                        commit: '承诺阶段', scoring: '评分阶段',
+                        completed: '已结束', cancelled: '已取消'
+                    };
+                    const readiness = item.enrolled
+                        ? `<span class="status-badge committed">已登记 k=${item.threshold}</span>`
+                        : '<span class="status-badge pending">未登记</span>';
+                    const pendingCell = item.pendingAssist > 0
+                        ? `<span class="status-badge pending">${item.pendingAssist} 个待协助</span>`
+                        : '—';
+                    const action = item.pendingAssist > 0 ? '去协助'
+                        : (item.enrolled ? '进入恢复' : '去登记');
+                    return `<tr>
+                        <td>
+                            <div class="activity-title">${title}</div>
+                        </td>
+                        <td><span class="phase-badge ${item.phase}">
+                            ${phaseNames[item.phase] || item.phase}</span></td>
+                        <td>${readiness}</td>
+                        <td>${pendingCell}</td>
+                        <td>${item.myOpenRequests || 0}</td>
+                        <td><a class="btn btn-small btn-secondary"
+                               href="recovery.html?id=${item.votingId}">${action}</a></td>
+                    </tr>`;
+                }).join('');
+
+                hub.innerHTML = `
+                    <div class="card">
+                        <div class="card-head">
+                            <h3>恢复总览</h3>
+                            <button class="btn btn-small btn-secondary" type="button"
+                                    onclick="renderRecoveryHub()">刷新</button>
+                        </div>
+                        <p class="page-desc" style="margin-bottom: 16px;">
+                            选择一个进行中的活动，完成恢复准备或协助其他评委。
+                        </p>
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <div class="stat-number">${pending}</div>
+                                <div class="stat-label">待协助请求</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-number">${open}</div>
+                                <div class="stat-label">我的恢复请求</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-number">${enrolled}/${active}</div>
+                                <div class="stat-label">已登记恢复材料</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-head"><h3>进行中的评审活动</h3></div>
+                        ${activities.length ? `
+                        <div class="table-scroll">
+                            <table class="table">
+                                <thead><tr>
+                                    <th>活动</th><th>阶段</th><th>恢复准备</th>
+                                    <th>待协助</th><th>我的请求</th><th></th>
+                                </tr></thead>
+                                <tbody>${rows}</tbody>
+                            </table>
+                        </div>` : `
+                        <div class="empty-state">
+                            <p>你当前没有进行中的评审活动。</p>
+                            <a class="btn btn-small btn-secondary"
+                               href="dashboard.html" style="margin-top: 8px;">返回仪表板</a>
+                        </div>`}
+                    </div>`;
+            } catch (error) {
+                hub.innerHTML = `
+                    <div class="card">
+                        <div class="status error">
+                            <h3>加载恢复总览失败</h3>
+                            <p>${escapeHtml(error.message)}</p>
+                            <button class="btn btn-small btn-secondary" type="button"
+                                    onclick="renderRecoveryHub()">重试</button>
+                        </div>
+                    </div>`;
+            }
+        }
+
+        async function refreshAll() {
+            keysData = (await api('/recovery/keys?votingId=' + votingId)).data;
+            statusData = (await api('/recovery/status?votingId=' + votingId)).data;
+            hasLocalKey = walletAddress
+                ? await RecoveryKeyStore.hasStoredKey(walletAddress)
+                : false;
+
+            const mine = statusData.voters.find(v => v.userId === currentUser.id);
+            myEnrollment = null;
+            if (mine && mine.enrolled) {
+                try {
+                    myEnrollment = (await api('/recovery/enrollments/my?votingId=' + votingId)).data;
+                } catch (error) {
+                    myEnrollment = null;
+                }
+            }
+            await loadAssistList();
+            await loadRecoveryHistory();
+            render();
+        }
+
+        /* ---------------- 恢复记录（P3.10） ---------------- */
+
+        function formatHistoryTime(value) {
+            if (!value) return '—';
+            const date = new Date(value);
+            return isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN');
+        }
+
+        async function loadRecoveryHistory() {
+            const container = document.getElementById('recoveryHistory');
+            if (!container || !votingId) return;
+            try {
+                const result = await api('/recovery/history?votingId=' + votingId);
+                const requests = (result.data && result.data.requests) || [];
+                historyCache = requests;
+                if (!requests.length) {
+                    container.className = 'empty-state';
+                    container.innerHTML = '<p>暂无恢复记录。完成登记或参与协作后会显示在这里。</p>';
+                    return;
+                }
+
+                const statusLabel = { open: '待收集', collected: '已收集', cancelled: '已取消' };
+                const statusClass = { open: 'pending', collected: 'committed', cancelled: 'locked' };
+
+                container.className = '';
+                container.innerHTML = `
+                    <div class="table-scroll">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>时间</th><th>发起人</th><th>我的角色</th>
+                                    <th>门限</th><th>进度</th><th>状态</th><th>投递人</th><th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${requests.map(item => {
+                                    const shares = item.shares || [];
+                                    const roles = item.mine === 'requester'
+                                        ? '发起人'
+                                        : (item.submittedByMe ? '协助者（已投递）' : '协助者');
+                                    return `<tr>
+                                        <td class="text-subtle">${formatHistoryTime(item.createdAt)}</td>
+                                        <td>${item.requester.username}</td>
+                                        <td>${roles}</td>
+                                        <td>${item.threshold}</td>
+                                        <td>${item.collected} / ${item.threshold}</td>
+                                        <td><span class="status-badge ${statusClass[item.status] || 'locked'}">
+                                            ${statusLabel[item.status] || item.status}</span></td>
+                                        <td>${shares.length
+                                            ? shares.map(s => s.fromUsername).join('、')
+                                            : '—'}</td>
+                                        <td><button class="btn btn-small btn-ghost" type="button"
+                                                    aria-expanded="false"
+                                                    onclick="toggleHistoryDetail(${item.requestId}, this)">详情</button></td>
+                                    </tr>`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>`;
+            } catch (error) {
+                container.className = 'alert is-danger';
+                container.textContent = '加载恢复记录失败: ' + error.message;
+            }
+        }
+
+        function toggleHistoryDetail(requestId, button) {
+            const table = document.querySelector('#recoveryHistory table');
+            if (!table) return;
+            const existing = table.querySelector(
+                'tr.history-detail[data-detail-for="' + requestId + '"]');
+            if (existing) {
+                existing.remove();
+                button.setAttribute('aria-expanded', 'false');
+                button.textContent = '详情';
+                return;
+            }
+
+            const item = (historyCache || []).find(row => row.requestId === requestId);
+            if (!item) return;
+
+            const events = [];
+            events.push({
+                time: item.createdAt,
+                text: item.requester.username + ' 发起恢复请求（门限 k=' + item.threshold + '）'
+            });
+            (item.shares || []).forEach(share => {
+                events.push({
+                    time: share.createdAt,
+                    text: share.fromUsername + ' 投递了加密份额'
+                });
+            });
+            if (item.status === 'collected' && item.updatedAt) {
+                events.push({ time: item.updatedAt, text: '达到门限，请求状态变为已收集' });
+            }
+
+            const row = document.createElement('tr');
+            row.className = 'history-detail';
+            row.setAttribute('data-detail-for', String(requestId));
+            row.innerHTML = `<td colspan="8">
+                <ul class="history-timeline">
+                    ${events.map(event => `
+                        <li>
+                            <span class="history-time">${formatHistoryTime(event.time)}</span>
+                            <span class="history-text">${escapeHtml(event.text)}</span>
+                        </li>`).join('')}
+                </ul>
+            </td>`;
+            button.closest('tr').after(row);
+            button.setAttribute('aria-expanded', 'true');
+            button.textContent = '收起';
+        }
+
+        function downloadTextFile(filename, text, mime) {
+            const blob = new Blob([text], { type: mime });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = filename;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 0);
+        }
+
+        function csvCell(value) {
+            const text = String(value === null || value === undefined ? '' : value);
+            return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+        }
+
+        function setHistoryExportState(text, isError) {
+            const state = document.getElementById('historyExportState');
+            if (!state) return;
+            state.textContent = text || '';
+            state.style.color = isError ? 'var(--danger)' : 'var(--fg-muted)';
+        }
+
+        function exportRecoveryHistory(format) {
+            if (!historyCache || !historyCache.length) {
+                setHistoryExportState('暂无恢复记录可导出', true);
+                return;
+            }
+            const stamp = new Date().toISOString().slice(0, 10);
+            const payload = {
+                schema: 'ZK-SealedWeigh.recovery.history.v1',
+                votingId: Number(votingId),
+                exportedAt: new Date().toISOString(),
+                requests: historyCache
+            };
+
+            if (format === 'json') {
+                const filename = 'recovery-history-' + votingId + '-' + stamp + '.json';
+                setHistoryExportState('正在导出 ' + filename + ' ...');
+                try {
+                    downloadTextFile(
+                        filename,
+                        JSON.stringify(payload, null, 2),
+                        'application/json;charset=utf-8');
+                    setHistoryExportState('已导出 ' + filename);
+                    notify('恢复记录已导出为 JSON', 'success');
+                } catch (error) {
+                    setHistoryExportState('导出 JSON 失败: ' + error.message, true);
+                }
+                return;
+            }
+
+            const header = ['requestId', 'createdAt', 'updatedAt', 'requester',
+                'requesterWallet', 'threshold', 'collected', 'status',
+                'myRole', 'submittedByMe', 'trustees'];
+            const lines = historyCache.map(item => [
+                item.requestId,
+                item.createdAt,
+                item.updatedAt,
+                item.requester.username,
+                item.requester.walletAddress,
+                item.threshold,
+                item.collected,
+                item.status,
+                item.mine,
+                item.submittedByMe ? 'yes' : 'no',
+                (item.shares || []).map(share => share.fromUsername).join(';')
+            ].map(csvCell).join(','));
+            const filename = 'recovery-history-' + votingId + '-' + stamp + '.csv';
+            setHistoryExportState('正在导出 ' + filename + ' ...');
+            try {
+                downloadTextFile(
+                    filename,
+                    '\uFEFF' + [header.join(','), ...lines].join('\n'),
+                    'text/csv;charset=utf-8');
+                setHistoryExportState('已导出 ' + filename);
+                notify('恢复记录已导出为 CSV', 'success');
+            } catch (error) {
+                setHistoryExportState('导出 CSV 失败: ' + error.message, true);
+            }
+        }
+
+        /* ---------------- 三步向导（P3.7） ---------------- */
+
+        function stepDone(step) {
+            if (step === 1) return !!myEnrollment;
+            if (step === 2) return !!recoveredPayload;
+            if (step === 3) return assistedCount > 0;
+            return false;
+        }
+
+        function bindWizard() {
+            document.querySelectorAll('.wizard-steps .step').forEach(button => {
+                button.addEventListener('click', () => {
+                    goStep(Number(button.dataset.step), { animate: true });
+                });
+            });
+
+            // 方向键切换：焦点在步骤条上，或页面主体（未聚焦输入控件）时生效
+            document.addEventListener('keydown', event => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                const target = event.target;
+                const inSteps = target && target.closest &&
+                    target.closest('.wizard-steps');
+                if (!inSteps && target !== document.body) return;
+                event.preventDefault();
+                const delta = event.key === 'ArrowRight' ? 1 : -1;
+                const next = Math.max(1, Math.min(3, currentStep + delta));
+                goStep(next, { animate: true });
+                const stepButton = document.querySelector(
+                    '.wizard-steps .step[data-step="' + next + '"]');
+                if (stepButton) stepButton.focus();
+            });
+        }
+
+        /* 统一的按钮忙碌态：保留原标签，避免各按钮各写一套 */
+        function setButtonBusy(button, busy, busyText) {
+            if (!button) return;
+            if (busy) {
+                if (!button.dataset.idleLabel) button.dataset.idleLabel = button.textContent;
+                button.textContent = busyText || '处理中...';
+                button.disabled = true;
+                button.setAttribute('aria-busy', 'true');
+            } else {
+                button.textContent = button.dataset.idleLabel || button.textContent;
+                button.disabled = false;
+                button.removeAttribute('aria-busy');
+            }
+        }
+
+        function goStep(step, options) {
+            const target = Math.max(1, Math.min(3, Number(step) || 1));
+            const changed = target !== currentStep;
+            currentStep = target;
+
+            document.querySelectorAll('.wizard-panel').forEach(panel => {
+                const isActive = Number(panel.dataset.panel) === target;
+                panel.classList.toggle('is-active', isActive);
+                if (isActive && options && options.animate && changed) {
+                    panel.classList.remove('is-entering');
+                    void panel.offsetWidth;          // 强制重排以重启动画
+                    panel.classList.add('is-entering');
+                    window.setTimeout(() => panel.classList.remove('is-entering'), 360);
+                }
+            });
+
+            syncWizard();
+            if (target === 3) loadAssistList();
+
+            if (window.history && window.history.replaceState) {
+                window.history.replaceState(null, '', '#step' + target);
+            }
+        }
+
+        /* 只同步步骤条 / 进度 / 门禁，不切换面板、不触发额外请求 */
+        function syncWizard() {
+            const target = currentStep;
+
+            document.querySelectorAll('.wizard-steps .step').forEach(button => {
+                const index = Number(button.dataset.step);
+                const isCurrent = index === target;
+                button.classList.toggle('is-current', isCurrent);
+                button.classList.toggle('is-done', !isCurrent && stepDone(index));
+                button.classList.toggle('is-todo', !isCurrent && !stepDone(index));
+                button.setAttribute('aria-selected', isCurrent ? 'true' : 'false');
+                if (isCurrent) {
+                    button.setAttribute('aria-current', 'step');
+                } else {
+                    button.removeAttribute('aria-current');
+                }
+            });
+
+            document.getElementById('wizardTrackFill').style.width =
+                ((target - 1) / 2 * 100) + '%';
+            document.getElementById('wizardHint').textContent =
+                '第 ' + target + ' / 3 步 · ' + STEP_LABELS[target] +
+                (stepDone(target) ? '（已完成）' : '');
+
+            document.getElementById('prevStepBtn').disabled = target <= 1;
+            document.getElementById('nextStepBtn').disabled = target >= 3;
+
+            updateStepGates();
+            managePolling();
+        }
+
+        function updateStepGates() {
+            const gate = document.getElementById('step2Gate');
+            const body = document.getElementById('step2Body');
+            if (!gate || !body) return;
+            const blocked = !myEnrollment;
+            gate.style.display = blocked ? 'block' : 'none';
+            body.style.display = blocked ? 'none' : 'block';
+            renderRequestState();
+        }
+
+        function stopPolling() {
+            if (pollTimer) {
+                window.clearInterval(pollTimer);
+                pollTimer = null;
+            }
+        }
+
+        /* 收集未满时每 8 秒刷新一次份额进度；页面隐藏时跳过请求 */
+        function managePolling() {
+            stopPolling();
+            if (currentStep !== 2 || !currentRequest) return;
+            if (currentRequest.collected >= currentRequest.threshold) return;
+            pollTimer = window.setInterval(refreshRequestProgress, 8000);
+        }
+
+        async function refreshRequestProgress() {
+            if (document.hidden || !currentRequest) return;
+            try {
+                const box = await api('/recovery/sharebox/' + currentRequest.requestId);
+                currentRequest.collected = (box.data.shares || []).length;
+                currentRequest.threshold = box.data.threshold;
+                renderRequestState();
+                if (currentRequest.collected >= currentRequest.threshold) stopPolling();
+            } catch (error) {
+                /* 轮询失败保持静默，下一轮再试 */
+            }
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && currentStep === 2) refreshRequestProgress();
+        });
+
+        function render() {
+            document.getElementById('votingTitle').textContent = voting.title;
+            document.getElementById('votingDescription').textContent = voting.description || '无描述';
+            document.getElementById('currentPhase').textContent = voting.phase;
+            document.getElementById('currentPhase').className = 'phase-badge ' + voting.phase;
+            document.getElementById('voterCount').textContent = statusData.voters.length;
+            document.getElementById('walletAddress').textContent = shortAddress(walletAddress);
+            document.getElementById('localKeyState').textContent =
+                walletAddress && hasLocalKey ? '已加密保存' : '未生成';
+
+            const tbody = document.getElementById('statusTableBody');
+            tbody.innerHTML = statusData.voters.map(voter => `
+                <tr>
+                    <td>${voter.username}${voter.userId === currentUser.id ? '（您）' : ''}</td>
+                    <td><span class="status-badge ${voter.hasKey ? 'committed' : 'pending'}">${voter.hasKey ? '已发布' : '未发布'}</span></td>
+                    <td><span class="status-badge ${voter.enrolled ? 'committed' : 'pending'}">${voter.enrolled ? '已登记' : '未登记'}</span></td>
+                    <td>${voter.threshold != null ? voter.threshold : '—'}</td>
+                </tr>
+            `).join('');
+
+            renderThresholdOptions();
+            renderRecoveryHint();
+            renderRequestState();
+            syncWizard();
+        }
+
+        function otherVoters() {
+            return (keysData ? keysData.voters : []).filter(v => v.userId !== currentUser.id);
+        }
+
+        function renderThresholdOptions() {
+            const select = document.getElementById('thresholdSelect');
+            const n = otherVoters().length;
+            const previous = parseInt(select.value);
+            select.innerHTML = '';
+            for (let k = 1; k <= n; k++) {
+                select.innerHTML += `<option value="${k}">${k} / ${n}</option>`;
+            }
+            const preferred = previous || Math.min(2, n);
+            select.value = String(Math.min(preferred, n));
+            select.disabled = n <= 1 || !!myEnrollment;
+
+            document.getElementById('thresholdHint').textContent = n <= 1
+                ? '只有 1 位其他评委：k=1，意味着该评委可以单独恢复你的材料，安全性最低。'
+                : 'k 越大越安全，但需要更多评委同时在线协作。';
+        }
+
+        function renderRecoveryHint() {
+            const mine = keysData.voters.find(v => v.userId === currentUser.id);
+            const missing = otherVoters().filter(v => !v.publicKey).map(v => v.username);
+            let text = '';
+            if (!walletAddress) {
+                text = '当前账号未绑定钱包，无法生成恢复密钥。请先在钱包管理中绑定。';
+            } else if (!mine || !mine.publicKey) {
+                text = '请先生成并发布恢复公钥，其他评委登记时才能把份额加密给你。';
+            } else if (missing.length) {
+                text = '以下评委尚未发布公钥，暂时无法登记：' + missing.join('、');
+            } else if (!myEnrollment) {
+                text = '公钥已就绪，可以登记恢复材料。登记会使用本浏览器保存的评分明文。';
+            } else {
+                text = '恢复材料已登记。若修改了评分，请重新登记以更新托管密文。';
+            }
+            document.getElementById('recoveryHint').textContent = text;
+        }
+
+        async function generateAndPublishKey() {
+            const button = document.getElementById('publishKeyBtn');
+            const text = document.getElementById('publishKeyText');
+            button.disabled = true;
+            text.textContent = '生成中...';
+            try {
+                if (!walletAddress) throw new Error('当前账号未绑定钱包');
+                const pair = await RecoveryCrypto.generateKeyPair();
+                const publicKey = await RecoveryCrypto.exportPublicKey(pair.publicKey);
+                const privateJwk = await RecoveryCrypto.exportPrivateKey(pair.privateKey);
+
+                await RecoveryKeyStore.savePrivateKey(privateJwk, {
+                    address: walletAddress,
+                    sign: signMessage
+                });
+
+                const message = 'ZK-SealedWeigh.recovery.key.v1|' + currentUser.id + '|' + publicKey;
+                const signature = await signMessage(message);
+                await api('/recovery/keys', {
+                    method: 'POST',
+                    body: { publicKey: publicKey, signature: signature }
+                });
+
+                notify('恢复公钥已发布，私钥已用钱包派生密钥加密保存在本浏览器', 'success');
+                await refreshAll();
+            } catch (error) {
+                notify('生成恢复公钥失败: ' + error.message, 'error');
+            } finally {
+                button.disabled = false;
+                text.textContent = '生成并发布恢复公钥';
+            }
+        }
+
+        function readLocalScoring() {
+            const raw = localStorage.getItem(`zkc:commit:${votingId}:${currentUser.id}`);
+            if (!raw) return null;
+            try {
+                return JSON.parse(raw);
+            } catch (error) {
+                return null;
+            }
+        }
+
+        async function enrollRecovery() {
+            const button = document.getElementById('enrollBtn');
+            const text = document.getElementById('enrollText');
+            button.disabled = true;
+            text.textContent = '登记中...';
+            const local = readLocalScoring();
+            try {
+                if (!local || !Array.isArray(local.scores) || !local.secret || !local.salt) {
+                    throw new Error('本浏览器没有该活动的评分明文，请先在评分页提交承诺');
+                }
+                const recipients = otherVoters();
+                if (!recipients.length) throw new Error('至少需要两位评委才能登记');
+                const missing = recipients.filter(v => !v.publicKey).map(v => v.username);
+                if (missing.length) throw new Error('以下评委尚未发布公钥：' + missing.join('、'));
+
+                const threshold = parseInt(document.getElementById('thresholdSelect').value, 10);
+                const scope = { votingId: Number(votingId), voter: walletAddress };
+                const masterKey = RecoveryCrypto.randomBytes(RecoveryCrypto.MASTER_KEY_BYTES);
+                const escrow = await RecoveryCrypto.encryptEscrow({
+                    scores: local.scores, secret: local.secret, salt: local.salt
+                }, masterKey, scope);
+
+                const shares = RecoveryCrypto.splitSecret(masterKey, threshold, recipients.length);
+                const envelopes = [];
+                for (let i = 0; i < recipients.length; i++) {
+                    envelopes.push(await RecoveryCrypto.wrapShareFor(shares[i], recipients[i].publicKey, {
+                        votingId: Number(votingId), from: walletAddress, to: recipients[i].walletAddress
+                    }));
+                }
+
+                const manifest = {
+                    schema: MANIFEST_SCHEMA,
+                    votingId: Number(votingId),
+                    voter: walletAddress,
+                    threshold: threshold,
+                    escrowHash: await RecoveryManifest.sha256Hex(
+                        RecoveryManifest.canonicalJson(escrow)),
+                    recipients: recipients.map(v => v.userId),
+                    envelopeHashes: await Promise.all(envelopes.map(env =>
+                        RecoveryManifest.sha256Hex(RecoveryManifest.canonicalJson(env))))
+                };
+                const message = RecoveryManifest.canonicalJson(manifest);
+                const signature = await signMessage(message);
+
+                await api('/recovery/enroll', {
+                    method: 'POST',
+                    body: {
+                        votingId: Number(votingId),
+                        escrow: escrow,
+                        envelopes: envelopes,
+                        manifest: manifest,
+                        manifestMessage: message,
+                        signature: signature
+                    }
+                });
+
+                notify('恢复材料已登记：托管密文 + ' + recipients.length + ' 份份额信封', 'success');
+                await refreshAll();
+                document.getElementById('prepareResult').style.display = 'block';
+                document.getElementById('prepareResult').innerHTML =
+                    '<div class="status success"><p>已登记，门限 k=' + threshold +
+                    ' / n=' + recipients.length + '。请牢记：k 位其他评委协作即可恢复你的评分。</p></div>';
+                goStep(2, { animate: true });
+            } catch (error) {
+                notify('登记恢复材料失败: ' + error.message, 'error');
+            } finally {
+                button.disabled = false;
+                text.textContent = '登记恢复材料';
+            }
+        }
+
+        async function createRecoveryRequest() {
+            const button = document.getElementById('requestBtn');
+            setButtonBusy(button, true, '创建中...');
+            try {
+                const result = await api('/recovery/request', {
+                    method: 'POST',
+                    body: { votingId: Number(votingId) }
+                });
+                currentRequest = result.data;
+                renderRequestState();
+                notify('恢复请求已就绪，等待其他评委投递份额', 'success');
+                await loadAssistList();
+                await loadRecoveryHistory();
+            } catch (error) {
+                notify('创建恢复请求失败: ' + error.message, 'error');
+            } finally {
+                setButtonBusy(button, false);
+            }
+        }
+
+        function renderRequestState() {
+            const panel = document.getElementById('requestState');
+            const recoverBtn = document.getElementById('recoverBtn');
+            if (!currentRequest) {
+                panel.style.display = 'none';
+                if (recoverBtn) recoverBtn.disabled = !myEnrollment;
+                managePolling();
+                return;
+            }
+            panel.style.display = 'block';
+            const ready = currentRequest.collected >= currentRequest.threshold;
+            panel.className = 'status ' + (ready ? 'success' : 'info');
+            panel.innerHTML = `
+                <p>请求 #${currentRequest.requestId}：已收集
+                   <strong>${currentRequest.collected}</strong> /
+                   <strong>${currentRequest.threshold}</strong> 份。</p>
+                <p>${ready ? '已满足门限，可以本地重构。' : '还差 ' +
+                    (currentRequest.threshold - currentRequest.collected) +
+                    ' 份，请让其他评委在“协助他人恢复”中投递；本页会自动刷新进度。'}</p>
+            `;
+            if (recoverBtn) recoverBtn.disabled = !ready;
+            managePolling();
+        }
+
+        async function collectAndRecover() {
+            const button = document.getElementById('recoverBtn');
+            setButtonBusy(button, true, '重构中...');
+            try {
+                if (!currentRequest) await createRecoveryRequest();
+                if (!currentRequest) throw new Error('尚未创建恢复请求');
+
+                const box = await api('/recovery/sharebox/' + currentRequest.requestId);
+                const sharesData = box.data.shares || [];
+                if (sharesData.length < box.data.threshold) {
+                    throw new Error(`还差 ${box.data.threshold - sharesData.length} 份份额`);
+                }
+                const enrollment = myEnrollment ||
+                    (await api('/recovery/enrollments/my?votingId=' + votingId)).data;
+                if (!enrollment) throw new Error('没有找到自己的托管密文');
+
+                const jwk = await RecoveryKeyStore.loadPrivateKey({
+                    address: walletAddress,
+                    sign: signMessage
+                });
+                if (!jwk) throw new Error('本浏览器没有恢复私钥，请先发布恢复公钥');
+
+                const privateKey = await RecoveryCrypto.importPrivateKey(jwk);
+                const shares = [];
+                for (const item of sharesData) {
+                    shares.push(await RecoveryCrypto.unwrapShare(item.envelope, privateKey, {
+                        votingId: Number(votingId),
+                        from: item.fromWallet,
+                        to: walletAddress
+                    }));
+                }
+                const masterKey = RecoveryCrypto.combineShares(shares);
+                // myEnrollment 已是接口返回的 data 本身，不能再取 .data（P3.9 实测修复）
+                recoveredPayload = await RecoveryCrypto.decryptEscrow(enrollment.escrow, masterKey, {
+                    votingId: Number(votingId), voter: walletAddress
+                });
+
+                renderRecovered();
+                notify('本地重构成功，明文未离开浏览器', 'success');
+                stopPolling();
+                syncWizard();
+                await loadRecoveryHistory();
+            } catch (error) {
+                console.error('[recovery] 本地重构失败', error);
+                notify('恢复失败: ' + error.message, 'error');
+            } finally {
+                setButtonBusy(button, false);
+                button.disabled = !currentRequest ||
+                    currentRequest.collected < currentRequest.threshold;
+            }
+        }
+
+        function renderRecovered() {
+            const panel = document.getElementById('recoveredPanel');
+            panel.style.display = 'block';
+            panel.innerHTML = `
+                <div class="status success">
+                    <h4>恢复成功</h4>
+                    <div class="commitment-details">
+                        <div class="detail-item"><strong>分数:</strong>
+                            <code>${JSON.stringify(recoveredPayload.scores)}</code></div>
+                        <div class="detail-item"><strong>密码:</strong>
+                            <code>${recoveredPayload.secret}</code></div>
+                        <div class="detail-item"><strong>salt:</strong>
+                            <code class="hash-display">${recoveredPayload.salt}</code></div>
+                    </div>
+                    <button class="btn btn-success" onclick="writeBackRecovered()" style="margin-top: 12px;">
+                        写回本浏览器并前往评分页
+                    </button>
+                </div>
+            `;
+        }
+
+        function writeBackRecovered() {
+            if (!recoveredPayload) return;
+            const key = `zkc:commit:${votingId}:${currentUser.id}`;
+            let existing = {};
+            try { existing = JSON.parse(localStorage.getItem(key)) || {}; } catch (error) { existing = {}; }
+            localStorage.setItem(key, JSON.stringify(Object.assign({}, existing, {
+                scores: recoveredPayload.scores,
+                secret: recoveredPayload.secret,
+                salt: recoveredPayload.salt
+            })));
+            notify('已写回本浏览器，正在前往评分页', 'success');
+            setTimeout(() => { window.location.href = 'score.html?id=' + votingId; }, 800);
+        }
+
+        async function loadAssistList() {
+            if (!currentUser) return;
+            const container = document.getElementById('assistList');
+            try {
+                const result = await api('/recovery/requests?votingId=' + votingId);
+                const requests = result.data.requests || [];
+                if (!requests.length) {
+                    container.className = 'empty-state';
+                    container.innerHTML = '<p>暂无可协助的恢复请求</p>';
+                    return;
+                }
+                container.className = '';
+                container.innerHTML = '<table class="table"><thead><tr>' +
+                    '<th>请求者</th><th>进度</th><th>门限</th><th></th></tr></thead><tbody>' +
+                    requests.map(item => `
+                        <tr>
+                            <td>${item.requester.username}</td>
+                            <td>${item.collected} / ${item.threshold}</td>
+                            <td>k=${item.threshold}</td>
+                            <td>${item.submittedByMe
+                                ? '<span class="status-badge committed">已投递</span>'
+                                : `<button class="btn btn-small" onclick="assistRequest(${item.requestId}, this)">投递我的份额</button>`}
+                            </td>
+                        </tr>`).join('') +
+                    '</tbody></table>';
+            } catch (error) {
+                container.className = 'alert is-danger';
+                container.textContent = '加载恢复请求失败: ' + error.message;
+            }
+        }
+
+        async function assistRequest(requestId, button) {
+            setButtonBusy(button, true, '投递中...');
+            try {
+                const list = await api('/recovery/requests?votingId=' + votingId);
+                const request = (list.data.requests || []).find(item => item.requestId === requestId);
+                if (!request) throw new Error('请求不存在或已收集完毕');
+
+                const envelopeResult = await api('/recovery/requests/' + requestId + '/envelopes');
+                const index = envelopeResult.data.recipientIds.indexOf(currentUser.id);
+                if (index < 0) throw new Error('请求者没有给你分配份额');
+                const myEnvelope = envelopeResult.data.envelopes[index];
+
+                const jwk = await RecoveryKeyStore.loadPrivateKey({
+                    address: walletAddress,
+                    sign: signMessage
+                });
+                if (!jwk) throw new Error('本浏览器没有恢复私钥');
+
+                const privateKey = await RecoveryCrypto.importPrivateKey(jwk);
+                const share = await RecoveryCrypto.unwrapShare(myEnvelope, privateKey, {
+                    votingId: Number(votingId),
+                    from: request.requester.walletAddress,
+                    to: walletAddress
+                });
+
+                const requesterKey = keysData.voters.find(v => v.userId === request.requester.userId);
+                if (!requesterKey || !requesterKey.publicKey) throw new Error('请求者公钥缺失');
+
+                const envelope = await RecoveryCrypto.wrapShareFor(share, requesterKey.publicKey, {
+                    votingId: Number(votingId),
+                    from: walletAddress,
+                    to: request.requester.walletAddress
+                });
+                const message = RecoveryManifest.canonicalJson({
+                    schema: SHARE_SCHEMA,
+                    requestId: Number(requestId),
+                    votingId: Number(votingId),
+                    from: walletAddress,
+                    to: request.requester.walletAddress,
+                    envelopeHash: await RecoveryManifest.sha256Hex(
+                        RecoveryManifest.canonicalJson(envelope))
+                });
+                const signature = await signMessage(message);
+
+                await api('/recovery/sharebox', {
+                    method: 'POST',
+                    body: {
+                        requestId: Number(requestId),
+                        envelope: envelope,
+                        message: message,
+                        signature: signature
+                    }
+                });
+                notify('份额已投递，等待请求者本地重构', 'success');
+                assistedCount += 1;
+                syncWizard();
+                await loadAssistList();
+                await loadRecoveryHistory();
+            } catch (error) {
+                notify('投递份额失败: ' + error.message, 'error');
+            } finally {
+                setButtonBusy(button, false);
+            }
+        }
+
+        function showError(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('errorMessage').style.display = 'block';
+            document.getElementById('errorText').textContent = message;
+        }
+
+        bindWizard();
+        window.addEventListener('load', loadPage);
+    </script>
+</body>
+</html>

@@ -1,0 +1,153 @@
+零知识密封加权评审系统（ZK-SealedWeigh） 部署文档
+====================================================
+
+一、环境要求
+----------------------------------------------------
+1. Python 3.9（推荐）。requirements.txt 为固定旧版本，
+   3.13 / 3.14 无预编译 wheel，会编译失败。
+2. Node.js 18 / 20 LTS（Hardhat 不支持 22+ / 25，会有告警，建议降到 LTS）。
+3. SQL Server（需 ODBC Driver 17 for SQL Server）。
+4. 浏览器安装 MetaMask。
+5. 【重要】设置环境变量 PYTHONUTF8=1。
+   中文 Windows 下 Python 默认用 GBK(cp936) 解码文件，会导致 web3 / eth_utils 读取
+   自带的 UTF-8 JSON 时报 UnicodeDecodeError('gbk' ... 0x88 ...)。
+   永久设置（推荐，一次即可，之后所有终端/IDE 都生效）：
+       setx PYTHONUTF8 1
+   设置完需重开终端。临时设置（仅当前窗口）：
+       $env:PYTHONUTF8 = "1"
+
+二、一次性准备
+----------------------------------------------------
+[1] 创建 Python 虚拟环境并安装依赖
+
+    py -3.9 -m venv C:\Users\<用户名>\.venvs\zkvoting
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+    C:\Users\<用户名>\.venvs\zkvoting\Scripts\Activate.ps1
+
+    cd d:\国赛\voting-system\voting-system\backend
+    python -m pip install --upgrade pip
+    pip install -r requirements.txt
+
+    说明：以后启动后端都要用该环境的 python，不要用系统默认 python。
+
+[2] 初始化数据库
+
+    方式 A：命令行（务必加 -f 65001，否则中文种子数据会乱码）
+        sqlcmd -S "tcp:localhost,1433" -U sa -P <你的口令> -f 65001 -i database\init.sql
+    方式 B：用 SSMS 打开 database\init.sql 并执行
+
+    建库内容：ZKVotingSystem + 7 张表 + 种子数据
+             （3 个用户 / 1 个示例评审活动 / 3 个候选 / 2 个评委）。
+
+    验证（应显示中文「示例评审活动」）：
+        sqlcmd -S "tcp:localhost,1433" -U sa -P <口令> -d ZKVotingSystem -Q "SELECT title FROM voting_sessions"
+
+[3] 配置 backend\.env
+
+    复制 backend\.env.example 为 backend\.env，逐项填写：
+      DB_SERVER / DB_NAME / DB_USER / DB_PASSWORD / DB_PORT / DB_DRIVER
+      JWT_SECRET_KEY          —— 请改成随机强密钥
+      BLOCKCHAIN_RPC_URL      —— http://127.0.0.1:8545（勿用 localhost，Windows IPv6 回退会使每次连接多等约 2s）
+      CONTRACT_ADDRESS        —— 部署脚本打印的合约地址（见第三步）
+      DEPLOYER_PRIVATE_KEY    —— Hardhat 账户#0 的私钥（relayer）
+      CHAIN_ID                —— 31337
+
+    注意：CONTRACT_ADDRESS 必须填“合约地址”，不是账户地址。
+
+[4] 安装 Hardhat 依赖（首次）
+
+    cd d:\国赛\voting-system\voting-system\hardhat-project
+    npm install
+
+三、启动顺序
+----------------------------------------------------
+终端 A —— 启动本地链（保持运行，不要关闭）
+
+    cd d:\国赛\voting-system\voting-system\hardhat-project
+    npx hardhat clean
+    npx hardhat compile
+    npx hardhat node
+
+    启动后核对第 0 个账户地址，应与 backend\.env 中 DEPLOYER_PRIVATE_KEY 对应
+    （Hardhat 默认账户#0 为 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266）。
+
+终端 B —— 部署合约（A 仍在运行时执行）
+
+    cd d:\国赛\voting-system\voting-system\hardhat-project
+    npx hardhat run scripts/deploy.ts --network localhost
+
+    记下输出中的「合约地址: 0x...」，填入 backend\.env 的 CONTRACT_ADDRESS。
+    纯新链首次部署通常为 0x5FbDB2315678afecb367f032d93F642f64180aa3。
+
+终端 B/C —— 启动后端
+
+    cd d:\国赛\voting-system\voting-system\backend
+    $env:PYTHONUTF8 = "1"          # 关键：不设置会因 GBK 解码失败而启动中断
+    C:\Users\<用户名>\.venvs\zkvoting\Scripts\python.exe app.py
+
+    访问 http://127.0.0.1:5000/api/health ，确认
+      database: healthy
+      blockchain: connected
+
+终端 D —— 启动前端
+
+    cd d:\国赛\voting-system\voting-system\frontend
+    python server.py
+
+    浏览器访问 http://127.0.0.1:3001
+
+四、一键启动（推荐）
+----------------------------------------------------
+    cd d:\国赛\voting-system\voting-system
+    powershell -ExecutionPolicy Bypass -File .\start-all.ps1
+
+    脚本会：起链 → 编译部署 → 自动写入 .env 的 CONTRACT_ADDRESS → 起后端 → 起前端。
+    已部署过、不想重新部署时加 -SkipDeploy。
+
+五、MetaMask 配置
+----------------------------------------------------
+1. 添加网络：RPC http://127.0.0.1:8545 ，Chain ID 31337 ，货币 ETH。
+2. 导入 Hardhat 打印的账户私钥：
+   - 账户#0 = 发布者 / relayer（.env 里的私钥）
+   - 账户#1、#2 = 种子用户 voter1 / voter2
+3. 评委提交承诺与揭晓时，需用「与建活动时登记的 wallet_address 一致」的账户签名，
+   否则无法通过合约的 Merkle 白名单校验。
+4. 种子账号口令统一为 123456：
+   admin(发布者, 账户#0) / voter1(账户#1) / voter2(账户#2)。
+
+六、常见问题
+----------------------------------------------------
+1. 后端报 No module named 'flask_sqlalchemy'
+   → 用错了解释器，请用装了依赖的那个（venv 内 python）。
+
+2. 重启 node 后链上提交/揭晓失败
+   → 链状态已重置，votingCount 归零，而 DB 旧记录的 blockchain_id 仍指向旧编号。
+     解决：重建数据库（重新执行 init.sql），或在页面上重新创建评审活动。
+
+3. hardhat node 报 Node.js 版本告警
+   → 使用 Node 18 / 20 LTS 可消除。
+
+4. 端口被占用
+   → 8545（链）、5000（后端）、3001（前端），请在启动前确认未被占用。
+
+5. 后端启动报 UnicodeDecodeError: 'gbk' codec can't decode byte 0x88
+   → 未开启 UTF-8 模式。先执行 setx PYTHONUTF8 1 并重开终端；
+     或启动前在当前窗口执行 $env:PYTHONUTF8 = "1"。
+
+6. 注册/登录报数据库连接失败（10061 / 目标计算机积极拒绝）
+   → SQL Server 服务未启动。以管理员身份运行：
+         net start MSSQLSERVER
+     然后用 Get-NetTCPConnection -LocalPort 1433 确认在监听。
+
+7. 页面上的中文变成乱码（如 绀轰緥璇勫… / 鍊欓€夋柟妗?）
+   → 用 sqlcmd 执行 init.sql 时未指定 -f 65001，UTF-8 脚本被按 GBK 读入，中文种子里存进了库。
+     修复：删库后带 -f 65001 重新执行：
+         sqlcmd -S "tcp:localhost,1433" -U sa -P <口令> -Q "ALTER DATABASE ZKVotingSystem SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ZKVotingSystem;"
+         sqlcmd -S "tcp:localhost,1433" -U sa -P <口令> -f 65001 -i database\init.sql
+
+七、安全注意事项
+----------------------------------------------------
+1. DEPLOYER_PRIVATE_KEY、DB_PASSWORD、JWT_SECRET_KEY 等只放在 backend\.env，
+   严禁写入代码或提交进仓库（.gitignore 已排除 .env）。
+2. 上述密钥仅为本地开发使用，不要用于任何真实资产。
+3. 生产环境需替换为随机强密钥，并对数据库口令做加密/密钥托管管理。

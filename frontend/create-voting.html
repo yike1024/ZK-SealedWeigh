@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>创建评分活动 - 零知识密封加权评审系统</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="zk-utils.js"></script>
+    <script src="app-shell.js" defer></script>
+</head>
+<body>
+    <div class="page-header">
+        <h1 class="page-title">创建评审</h1>
+        <p class="page-desc">配置候选、评委与权重，创建一次密封加权评审活动</p>
+    </div>
+
+    <div class="card">
+        <form id="createVotingForm">
+                <!-- 基础信息 -->
+                <div class="form-section">
+                    <h3>活动基本信息</h3>
+                    <div class="form-group">
+                        <label class="required">活动标题:</label>
+                        <input type="text" class="input" id="votingTitle" placeholder="请输入活动标题，如：优秀项目评选" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="required">活动描述:</label>
+                        <textarea class="input" id="votingDescription" placeholder="详细描述评分活动的目的、规则和要求..." rows="4" required></textarea>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="required">评分权重:</label>
+                            <select class="input" id="weightType" required onchange="toggleWeightInputs()">
+                                <option value="">请选择权重类型</option>
+                                <option value="equal">等权重</option>
+                                <option value="custom">自定义权重</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="required">评分范围:</label>
+                            <div class="score-range-compact">
+                                <input type="number" class="input range-input" id="minScore" placeholder="0" min="0" max="1000" value="0" required>
+                                <span class="range-separator">至</span>
+                                <input type="number" class="input range-input" id="maxScore" placeholder="10" min="1" max="1000" value="10" required>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 候选和评分者设置 - 并排布局 -->
+                <div class="form-section">
+                    <h3>活动参与设置</h3>
+                    <div class="form-row-equal">
+                        <!-- 候选设置 -->
+                        <div class="form-group form-column">
+                            <label class="required">候选列表:</label>
+                            <textarea class="input" id="candidates" placeholder="请输入候选，每行一个&#10;例如：&#10;候选A&#10;候选B&#10;候选C" rows="6" required></textarea>
+                            <small>每个候选单独一行，系统会自动去重</small>
+                            <div id="candidateValidation" class="validation-message" style="display: none;"></div>
+                        </div>
+
+                        <!-- 评分者设置 -->
+                        <div class="form-group form-column">
+                            <label class="required" id="votersLabel">评分者列表:</label>
+                            <div id="customWeightsSection" style="display: none;">
+                                <small>格式: 用户名:权重 (例如: user1:2.0 或 user2:1.5)</small>
+                            </div>
+                            <textarea class="input" id="voters" placeholder="请输入评分者用户名，每行一个&#10;系统会自动验证钱包地址&#10;例如：&#10;voter1&#10;voter2&#10;voter3" rows="6" required></textarea>
+                            <small id="votersHelp">每个评分者用户名单独一行，用户必须已绑定有效的钱包地址</small>
+                            
+                            <!-- 钱包地址验证 -->
+                            <div class="wallet-validation" id="walletValidation" style="display: none; margin-top: 15px;">
+                                <h4>钱包地址验证</h4>
+                                <div id="walletValidationContent" class="wallet-validation-content"></div>
+                            </div>
+                            
+                            <div class="weight-preview" id="weightPreview" style="display: none;">
+                                <h4>权重预览</h4>
+                                <div id="weightPreviewContent"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="required">承诺阶段时长 (小时):</label>
+                            <input type="number" class="input" id="commitDuration" placeholder="24" min="1" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="required">评分阶段时长 (小时):</label>
+                            <input type="number" class="input" id="scoreDuration" placeholder="48" min="1" required>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 高级设置 -->
+                <div class="form-section">
+                    <h3>高级设置</h3>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enableZKProof" checked>
+                            启用零知识证明验证
+                        </label>
+                        <small>确保评分隐私和防止操纵</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enableBlockchain" checked>
+                            启用区块链集成
+                        </label>
+                        <small>使用区块链确保投票的不可篡改性和透明度</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>评分规则说明:</label>
+                        <textarea class="input" id="scoringRules" placeholder="详细说明评分标准和规则...&#10;例如：&#10;评分标准：&#10;1. 创新性 (30%)&#10;2. 技术难度 (30%)&#10;3. 完成度 (20%)&#10;4. 团队协作 (20%)" rows="3"></textarea>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="window.history.back()">取消</button>
+                    <button type="button" class="btn btn-primary" id="createBtn">
+                        <span id="createText">创建评分活动</span>
+                        <span id="createLoading" style="display: none;">创建中...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3>创建说明</h3>
+            <ul>
+                <li><strong>区块链集成</strong>: 所有投票者必须绑定有效的以太坊钱包地址 (0x...)</li>
+                <li><strong>评分范围</strong>: 设置评分的最小值和最大值，如0-10分、1-5分等</li>
+                <li><strong>零知识证明</strong>: 评分者先提交承诺，确保无法根据中间结果操纵评分</li>
+                <li><strong>加权评分</strong>: 支持不同权重的评分者，结果更公平</li>
+                <li><strong>中断恢复</strong>: 当有评分者弃票时，系统能自动完成统计</li>
+                <li><strong>防作弊</strong>: 通过密码学承诺防止重复评分和结果操纵</li>
+            </ul>
+        </div>
+
+    <script>
+        let currentUser = null;
+
+        // 检查权限
+        async function checkPublisherAuth() {
+            if (!ZKUtils.isLoggedIn()) {
+                window.location.href = 'index.html';
+                return false;
+            }
+
+            try {
+                const result = await ZKUtils.getCurrentUser();
+                if (result.success) {
+                    currentUser = result.data;
+                    if (currentUser.role !== 'publisher') {
+                        alert('只有活动发布者可以创建评分活动！');
+                        window.location.href = 'dashboard.html';
+                        return false;
+                    }
+                    return true;
+                } else {
+                    window.location.href = 'index.html';
+                    return false;
+                }
+            } catch (error) {
+                window.location.href = 'index.html';
+                return false;
+            }
+        }
+
+        // 验证评分范围
+        function validateScoreRange() {
+            const minScore = parseInt(document.getElementById('minScore').value) || 0;
+            const maxScore = parseInt(document.getElementById('maxScore').value) || 10;
+            
+            if (minScore < 0) {
+                alert('最小分数不能小于0！');
+                document.getElementById('minScore').value = 0;
+                return false;
+            }
+            
+            if (maxScore > 1000) {
+                alert('最大分数不能大于1000！');
+                document.getElementById('maxScore').value = 1000;
+                return false;
+            }
+            
+            if (minScore >= maxScore) {
+                alert('最大分数必须大于最小分数！');
+                document.getElementById('maxScore').value = minScore + 1;
+                return false;
+            }
+            
+            const range = maxScore - minScore;
+            if (range > 100) {
+                if (!confirm(`您设置的评分范围较大（${range}分），这可能会影响评分体验。确定要继续吗？`)) {
+                    return false;
+                }
+            }
+            
+            return true;
+        }
+
+        // 切换权重输入模式
+        function toggleWeightInputs() {
+            const weightType = document.getElementById('weightType').value;
+            const customWeightsSection = document.getElementById('customWeightsSection');
+            const votersLabel = document.getElementById('votersLabel');
+            const votersHelp = document.getElementById('votersHelp');
+            const weightPreview = document.getElementById('weightPreview');
+            
+            if (weightType === 'custom') {
+                customWeightsSection.style.display = 'block';
+                votersLabel.textContent = '评分者列表 (用户名:权重):';
+                votersHelp.textContent = '格式: 用户名:权重 (例如: user1:2.0 或 user2:1.5)';
+                document.getElementById('voters').placeholder = "请输入评分者用户名和权重，每行一个\n格式：用户名:权重\n例如：\nuser1:2.0\nuser2:1.5\nuser3:1.0";
+                weightPreview.style.display = 'block';
+            } else {
+                customWeightsSection.style.display = 'none';
+                votersLabel.textContent = '评分者列表:';
+                votersHelp.textContent = '每个评分者用户名单独一行，用户必须已绑定有效的钱包地址';
+                document.getElementById('voters').placeholder = "请输入评分者用户名，每行一个\n系统会自动验证钱包地址\n例如：\nvoter1\nvoter2\nvoter3";
+                weightPreview.style.display = 'block';
+            }
+            
+            updateWeightPreview();
+        }
+
+        // 验证用户钱包地址
+        async function validateUserWallets() {
+            const votersInput = document.getElementById('voters').value;
+            const voters = votersInput.split('\n')
+                .map(v => v.trim())
+                .filter(v => v !== '');
+            
+            const validationContent = document.getElementById('walletValidationContent');
+            const walletValidation = document.getElementById('walletValidation');
+            
+            if (voters.length === 0) {
+                walletValidation.style.display = 'none';
+                return { allValid: true, validCount: 0, totalCount: 0 };
+            }
+            
+            let allValid = true;
+            let validCount = 0;
+            let totalCount = voters.length;
+            let validationHTML = '<div class="wallet-list">';
+            
+            for (const voter of voters) {
+                let username, weight;
+                
+                if (document.getElementById('weightType').value === 'custom') {
+                    const parts = voter.split(':');
+                    if (parts.length === 2) {
+                        username = parts[0].trim();
+                        weight = parseFloat(parts[1].trim()) || 1.0;
+                    } else {
+                        username = voter;
+                        weight = 1.0;
+                    }
+                } else {
+                    username = voter;
+                    weight = 1.0;
+                }
+                
+                try {
+                    // 调用API验证用户钱包地址
+                    const userResult = await ZKUtils.apiCall(`/auth/user/${encodeURIComponent(username)}`);
+                    
+                    if (userResult.success && userResult.data) {
+                        const user = userResult.data;
+                        const wallet = user.wallet_address;
+                        
+                        // 统一验证钱包地址
+                        let isValid = false;
+                        let statusMessage = '';
+                        
+                        if (wallet) {
+                            isValid = wallet.startsWith('0x') && wallet.length === 42;
+                            statusMessage = isValid ? '钱包有效' : '钱包格式无效';
+                        } else {
+                            statusMessage = '未绑定钱包';
+                        }
+                        
+                        validationHTML += `
+                            <div class="wallet-item ${isValid ? 'valid' : 'invalid'}">
+                                <div class="wallet-info">
+                                    <span class="username"><strong>${username}</strong></span>
+                                    <span class="wallet-address">${wallet || '无钱包地址'}</span>
+                                </div>
+                                <span class="validation-status">${statusMessage}</span>
+                            </div>
+                        `;
+                        
+                        if (isValid) {
+                            validCount++;
+                        } else {
+                            allValid = false;
+                        }
+                    } else {
+                        validationHTML += `
+                            <div class="wallet-item invalid">
+                                <div class="wallet-info">
+                                    <span class="username"><strong>${username}</strong></span>
+                                    <span class="wallet-address">用户不存在</span>
+                                </div>
+                                <span class="validation-status">无效</span>
+                            </div>
+                        `;
+                        allValid = false;
+                    }
+                } catch (error) {
+                    validationHTML += `
+                        <div class="wallet-item invalid">
+                            <div class="wallet-info">
+                                <span class="username"><strong>${username}</strong></span>
+                                <span class="wallet-address">验证失败: ${error.message}</span>
+                            </div>
+                            <span class="validation-status">错误</span>
+                        </div>
+                    `;
+                    allValid = false;
+                }
+            }
+            
+            // 添加统计信息
+            const statsHTML = `
+                <div class="wallet-stats ${allValid ? 'valid' : 'invalid'}">
+                    <strong>验证结果:</strong> ${validCount}/${totalCount} 个用户有有效钱包地址
+                    ${allValid ? '所有用户都有效' : '部分用户无效'}
+                </div>
+            `;
+            
+            validationHTML += '</div>' + statsHTML;
+            validationContent.innerHTML = validationHTML;
+            walletValidation.style.display = 'block';
+            
+            return { allValid, validCount, totalCount };
+        }
+
+        // 更新权重预览
+        async function updateWeightPreview() {
+            const weightType = document.getElementById('weightType').value;
+            const votersInput = document.getElementById('voters').value;
+            const previewContent = document.getElementById('weightPreviewContent');
+            
+            if (!votersInput.trim()) {
+                previewContent.innerHTML = '<div class="no-data">请输入评分者信息</div>';
+                return;
+            }
+            
+            const voters = votersInput.split('\n')
+                .map(v => v.trim())
+                .filter(v => v !== '');
+            
+            if (voters.length === 0) {
+                previewContent.innerHTML = '<div class="no-data">请输入评分者信息</div>';
+                return;
+            }
+            
+            let previewHTML = '<div class="weight-preview-list">';
+            let totalWeight = 0;
+            let validUserCount = 0;
+            
+            // 批量验证用户
+            const usernames = voters.map(voter => {
+                if (weightType === 'custom') {
+                    const parts = voter.split(':');
+                    return parts.length === 2 ? parts[0].trim() : voter;
+                } else {
+                    return voter;
+                }
+            });
+            
+            try {
+                const batchResult = await ZKUtils.apiCall('/auth/users/batch', {
+                    method: 'POST',
+                    body: { usernames: usernames }
+                });
+                
+                if (batchResult.success) {
+                    const userMap = batchResult.data;
+                    
+                    voters.forEach(voter => {
+                        let username, weight;
+                        
+                        if (weightType === 'custom') {
+                            const parts = voter.split(':');
+                            if (parts.length === 2) {
+                                username = parts[0].trim();
+                                weight = parseFloat(parts[1].trim()) || 1.0;
+                            } else {
+                                username = voter;
+                                weight = 1.0;
+                            }
+                        } else {
+                            username = voter;
+                            weight = 1.0;
+                        }
+                        
+                        const userInfo = userMap[username];
+                        const hasValidWallet = userInfo && userInfo.wallet_valid;
+                        
+                        if (hasValidWallet) {
+                            validUserCount++;
+                        }
+                        
+                        totalWeight += weight;
+                        
+                        previewHTML += `
+                            <div class="weight-preview-item ${hasValidWallet ? 'valid' : 'invalid'}">
+                                <div class="user-info">
+                                    <span class="username">${username}</span>
+                                    <span class="user-status">${hasValidWallet ? '有效' : '无效'}</span>
+                                </div>
+                                <span class="weight">权重: ${weight.toFixed(1)}</span>
+                            </div>
+                        `;
+                    });
+                }
+            } catch (error) {
+                // 如果批量验证失败，回退到单个显示
+                voters.forEach(voter => {
+                    let username, weight;
+                    
+                    if (weightType === 'custom') {
+                        const parts = voter.split(':');
+                        if (parts.length === 2) {
+                            username = parts[0].trim();
+                            weight = parseFloat(parts[1].trim()) || 1.0;
+                        } else {
+                            username = voter;
+                            weight = 1.0;
+                        }
+                    } else {
+                        username = voter;
+                        weight = 1.0;
+                    }
+                    
+                    totalWeight += weight;
+                    
+                    previewHTML += `
+                        <div class="weight-preview-item unknown">
+                            <div class="user-info">
+                                <span class="username">${username}</span>
+                                <span class="user-status">待校验</span>
+                            </div>
+                            <span class="weight">权重: ${weight.toFixed(1)}</span>
+                        </div>
+                    `;
+                });
+            }
+            
+            const avgWeight = totalWeight / voters.length;
+            previewHTML += '</div>';
+            previewHTML += `
+                <div class="weight-stats">
+                    <div>总权重: <strong>${totalWeight.toFixed(1)}</strong></div>
+                    <div>平均权重: <strong>${avgWeight.toFixed(1)}</strong></div>
+                    <div>有效用户: <strong>${validUserCount}/${voters.length}</strong></div>
+                </div>
+            `;
+            
+            previewContent.innerHTML = previewHTML;
+        }
+
+        // 验证候选输入
+        function validateCandidates() {
+            const candidatesInput = document.getElementById('candidates').value;
+            const candidates = candidatesInput.split('\n')
+                .map(c => c.trim())
+                .filter(c => c !== '');
+            
+            const validationDiv = document.getElementById('candidateValidation');
+            
+            if (candidates.length < 2) {
+                validationDiv.innerHTML = '<div class="status error">至少需要2个候选！</div>';
+                validationDiv.style.display = 'block';
+                return false;
+            }
+            
+            // 检查重复候选
+            const uniqueCandidates = [...new Set(candidates)];
+            if (uniqueCandidates.length !== candidates.length) {
+                validationDiv.innerHTML = '<div class="status warning">检测到重复的候选，系统会自动去重</div>';
+                validationDiv.style.display = 'block';
+            } else {
+                validationDiv.style.display = 'none';
+            }
+            
+            return true;
+        }
+
+        // 验证评分者输入
+        function validateVoters() {
+            const votersInput = document.getElementById('voters').value;
+            const voters = votersInput.split('\n')
+                .map(v => v.trim())
+                .filter(v => v !== '');
+            
+            if (voters.length < 1) {
+                alert('至少需要1个评分者！');
+                return false;
+            }
+            
+            const weightType = document.getElementById('weightType').value;
+            
+            if (weightType === 'custom') {
+                // 验证自定义权重格式
+                for (const voter of voters) {
+                    const parts = voter.split(':');
+                    if (parts.length === 2) {
+                        const weight = parseFloat(parts[1].trim());
+                        if (isNaN(weight) || weight < 0) {
+                            alert('无效的权重值: ' + parts[1]);
+                            return false;
+                        }
+                    } else {
+                        alert('自定义权重格式错误: ' + voter + '\n正确格式: 用户名:权重 (例如: user1:2.0)');
+                        return false;
+                    }
+                }
+            }
+            
+            return true;
+        }
+
+        // 处理投票者数据
+        function processVotersData() {
+            const weightType = document.getElementById('weightType').value;
+            const votersInput = document.getElementById('voters').value;
+            const voters = votersInput.split('\n')
+                .map(v => v.trim())
+                .filter(v => v !== '');
+            
+            if (weightType === 'custom') {
+                // 处理自定义权重格式: 用户名:权重
+                return voters.map(voter => {
+                    const parts = voter.split(':');
+                    if (parts.length === 2) {
+                        return {
+                            username: parts[0].trim(),
+                            weight: parseFloat(parts[1].trim()) || 1.0
+                        };
+                    } else {
+                        // 如果格式错误，使用默认权重
+                        return {
+                            username: voter,
+                            weight: 1.0
+                        };
+                    }
+                });
+            } else {
+                // 其他权重类型使用对象数组
+                return voters.map(voter => ({
+                    username: voter,
+                    weight: 1.0
+                }));
+            }
+        }
+
+        // 创建评分活动
+        async function createVoting() {
+            console.log('开始创建投票活动...');
+            
+            if (!await checkPublisherAuth()) return;
+
+            // 获取表单数据
+            const title = document.getElementById('votingTitle').value.trim();
+            const description = document.getElementById('votingDescription').value.trim();
+            
+            // 处理评分范围数据
+            const minScore = parseInt(document.getElementById('minScore').value) || 0;
+            const maxScore = parseInt(document.getElementById('maxScore').value) || 10;
+            
+            // 处理候选输入
+            const candidatesInput = document.getElementById('candidates').value;
+            const candidates = candidatesInput.split('\n')
+                .map(c => c.trim())
+                .filter(c => c !== '');
+            
+            // 处理评分者输入
+            const votersData = processVotersData();
+            
+            const weightType = document.getElementById('weightType').value;
+            const commitDuration = parseInt(document.getElementById('commitDuration').value) || 24;
+            const scoreDuration = parseInt(document.getElementById('scoreDuration').value) || 48;
+            const enableZKProof = document.getElementById('enableZKProof').checked;
+            const enableBlockchain = document.getElementById('enableBlockchain').checked;
+            const scoringRules = document.getElementById('scoringRules').value.trim();
+
+            // 验证数据
+            if (!title) {
+                alert('请输入活动标题！');
+                return;
+            }
+
+            if (!weightType) {
+                alert('请选择权重类型！');
+                return;
+            }
+
+            if (!validateScoreRange() || !validateCandidates() || !validateVoters()) {
+                return;
+            }
+            
+            // 验证所有用户都有有效的钱包地址（如果启用区块链）
+            if (enableBlockchain) {
+                const walletValidation = await validateUserWallets();
+                if (!walletValidation.allValid) {
+                    alert(`只有 ${walletValidation.validCount}/${walletValidation.totalCount} 个用户有有效的钱包地址！\n\n请确保所有评分者都已绑定有效的以太坊钱包地址 (0x...)`);
+                    return;
+                }
+            }
+
+            // 显示加载状态
+            document.getElementById('createText').style.display = 'none';
+            document.getElementById('createLoading').style.display = 'inline';
+            document.getElementById('createBtn').disabled = true;
+
+            try {
+                // 去重候选
+                const uniqueCandidates = [...new Set(candidates)];
+                console.log('提交的候选数据:', {
+                    original: candidates,
+                    unique: uniqueCandidates,
+                    count: uniqueCandidates.length
+                });
+
+                console.log('提交的评分者数据:', votersData);
+
+                const votingData = {
+                    title: title,
+                    description: description,
+                    candidates: uniqueCandidates,
+                    voters: votersData,
+                    min_score: minScore,
+                    max_score: maxScore,
+                    weight_type: weightType,
+                    commit_duration: commitDuration,
+                    score_duration: scoreDuration,
+                    enable_zk_proof: enableZKProof,
+                    enable_blockchain: enableBlockchain,
+                    scoring_rules: scoringRules
+                };
+
+                console.log('提交的完整投票数据:', votingData);
+                
+                const result = await ZKUtils.createVoting(votingData);
+                console.log('创建投票响应:', result);
+
+                if (result.success) {
+                    ZKUtils.showNotification('评分活动创建成功！', 'success');
+                    console.log('投票创建成功，跳转到管理页面，ID:', result.data.id);
+                    
+                    // 延迟跳转，确保用户看到成功消息
+                    setTimeout(() => {
+                        window.location.href = 'admin.html?id=' + result.data.id;
+                    }, 1500);
+                } else {
+                    console.error('创建失败:', result.message);
+                    ZKUtils.showNotification('创建失败: ' + result.message, 'error');
+                }
+            } catch (error) {
+                console.error('创建投票活动错误:', error);
+                let errorMessage = '创建失败: ';
+                
+                if (error.message.includes('Failed to fetch')) {
+                    errorMessage += '无法连接到服务器，请检查后端服务是否运行';
+                } else if (error.responseText) {
+                    try {
+                        const errorData = JSON.parse(error.responseText);
+                        errorMessage += errorData.message || error.responseText;
+                    } catch {
+                        errorMessage += error.responseText;
+                    }
+                } else {
+                    errorMessage += error.message;
+                }
+                
+                ZKUtils.showNotification(errorMessage, 'error');
+            } finally {
+                // 恢复按钮状态
+                document.getElementById('createText').style.display = 'inline';
+                document.getElementById('createLoading').style.display = 'none';
+                document.getElementById('createBtn').disabled = false;
+            }
+        }
+
+        // 实时验证和更新
+        document.getElementById('candidates').addEventListener('input', function() {
+            validateCandidates();
+        });
+
+        document.getElementById('voters').addEventListener('input', function() {
+            updateWeightPreview();
+            // 延迟验证钱包地址，避免频繁请求
+            clearTimeout(window.walletValidationTimeout);
+            window.walletValidationTimeout = setTimeout(() => {
+                validateUserWallets();
+            }, 1000);
+        });
+
+        document.getElementById('weightType').addEventListener('change', function() {
+            updateWeightPreview();
+        });
+
+        // 绑定创建按钮点击事件
+        document.getElementById('createBtn').addEventListener('click', createVoting);
+
+        // 阻止表单默认提交行为
+        document.getElementById('createVotingForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        });
+
+        // 页面加载
+        window.addEventListener('load', async function() {
+            console.log('初始化创建投票页面...');
+            await checkPublisherAuth();
+            
+            // 设置默认值
+            document.getElementById('commitDuration').value = '';
+            document.getElementById('scoreDuration').value = '';
+            
+            // 初始化UI状态
+            updateWeightPreview();
+        });
+    </script>
+</body>
+</html>

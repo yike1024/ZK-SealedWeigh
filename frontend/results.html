@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>投票结果 - 零知识密封加权评审系统</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="zk-utils.js"></script>
+    <script src="app-shell.js" defer></script>
+</head>
+<body>
+    <div class="page-header">
+        <h1 class="page-title">结果查询</h1>
+        <p class="page-desc">查看评审活动的加权统计结果与候选人明细</p>
+    </div>
+
+    <div id="loading" class="card">
+        <div class="loading">加载评审结果...</div>
+    </div>
+
+    <div id="resultsContent" style="display: none;">
+            <!-- 投票信息 -->
+            <div class="card">
+                <h2 id="resultsTitle"></h2>
+                <p id="resultsDescription" class="voting-description"></p>
+                
+                <div class="results-meta">
+                    <span class="phase-badge" id="resultsPhase">计票中</span>
+                    <span class="total-votes">总投票数: <span id="totalVotes">0</span></span>
+                    <span class="creator">创建者: <span id="resultsCreator"></span></span>
+                    <span>权重类型: <span id="resultsWeightType">等权重</span></span>
+                </div>
+            </div>
+
+            <!-- 获胜者 -->
+            <div id="winnerSection" class="card winner-card" style="display: none;">
+                <div class="winner-header">
+                    <span class="trophy">
+                        <svg class="icon icon-lg" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"></path><path d="M6 5H4v2a3 3 0 0 0 3 3M18 5h2v2a3 3 0 0 1-3 3M9 20h6M12 14v6"></path></svg>
+                    </span>
+                    <h3>获胜者</h3>
+                </div>
+                <div class="winner-info">
+                    <h4 id="winnerName"></h4>
+                    <div class="winner-score" id="winnerScore"></div>
+                    <div class="winner-details" id="winnerDetails"></div>
+                </div>
+            </div>
+
+            <!-- 结果图表 -->
+            <div class="card">
+                <h3>详细结果</h3>
+                <div id="resultsChart" class="results-chart"></div>
+            </div>
+
+            <!-- 统计数据 -->
+            <div class="card">
+                <h3>投票统计</h3>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-number" id="statTotalVotes">0</div>
+                        <div class="stat-label">总投票数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="statTotalVoters">0</div>
+                        <div class="stat-label">总评分者</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="statAvgScore">0</div>
+                        <div class="stat-label">平均分数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="statParticipation">0%</div>
+                        <div class="stat-label">参与率</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 候选人详情 -->
+            <div class="card">
+                <h3>候选人详情</h3>
+                <div id="candidatesDetails" class="candidates-details">
+                    <!-- 候选人详情将通过JS动态生成 -->
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="action-buttons">
+                <button class="btn" onclick="refreshResults()">刷新结果</button>
+                <button class="btn btn-secondary" onclick="shareResults()">分享结果</button>
+                <button class="btn btn-secondary" onclick="window.location.href='dashboard.html'">返回仪表板</button>
+            </div>
+        </div>
+
+    <script>
+        let currentVotingId = null;
+        let currentVotingData = null;
+
+        // 获取URL参数
+        function getUrlParams() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('id');
+        }
+
+        // 检查登录状态
+        async function checkAuth() {
+            if (!ZKUtils.isLoggedIn()) {
+                window.location.href = 'index.html';
+                return false;
+            }
+            return true;
+        }
+
+        // 加载投票结果
+        async function loadResults() {
+            if (!await checkAuth()) return;
+
+            currentVotingId = getUrlParams();
+            if (!currentVotingId) {
+                // 侧边导航直接进入时没有 ?id=：就地给出可选活动，不再弹窗并跳回仪表板
+                await ZKShell.renderVotingPicker({
+                    containerId: 'resultsContent',
+                    loadingId: 'loading',
+                    target: 'results.html',
+                    action: '查看结果'
+                });
+                return;
+            }
+
+            try {
+                // 获取投票基本信息
+                const votingResult = await ZKUtils.getVotingById(currentVotingId);
+                if (!votingResult.success) {
+                    alert('投票活动不存在');
+                    window.location.href = 'dashboard.html';
+                    return;
+                }
+
+                currentVotingData = votingResult.data;
+
+                // 获取投票结果
+                const resultsResult = await ZKUtils.getVotingResults(currentVotingId);
+                if (resultsResult.success) {
+                    displayResults(resultsResult.data);
+                } else {
+                    alert('获取结果失败: ' + resultsResult.message);
+                }
+            } catch (error) {
+                alert('加载结果失败: ' + error.message);
+            }
+        }
+
+        // 显示结果
+        function displayResults(resultsData) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('resultsContent').style.display = 'block';
+
+            // 基础信息
+            document.getElementById('resultsTitle').textContent = currentVotingData.title;
+            document.getElementById('resultsDescription').textContent = currentVotingData.description;
+            document.getElementById('resultsCreator').textContent = currentVotingData.creator_name;
+            // 阶段徽章：颜色 + 文字双重编码（同时设置显示名与阶段 class）
+            const phaseNames = {
+                commit: '承诺阶段',
+                scoring: '评分阶段',
+                completed: '结果公布',
+                cancelled: '已取消'
+            };
+            const phaseEl = document.getElementById('resultsPhase');
+            phaseEl.textContent = phaseNames[currentVotingData.phase] || '计票中';
+            phaseEl.className = 'phase-badge ' + (currentVotingData.phase || '');
+            
+            // 权重类型
+            const weightType = currentVotingData.weight_type;
+            const weightTypeText = weightType === 'equal' ? '等权重' : '自定义权重';
+            document.getElementById('resultsWeightType').textContent = weightTypeText;
+
+            const statistics = resultsData.statistics;
+            const candidates = resultsData.candidates;
+
+            // 更新统计信息
+            const totalVotes = statistics.scored_voters || 0;
+            const totalVoters = statistics.total_voters || 0;
+            const avgScore = calculateOverallAverage(candidates);
+            const participationRate = totalVoters > 0 ? 
+                Math.round((statistics.scored_voters / statistics.total_voters) * 100) : 0;
+
+            document.getElementById('totalVotes').textContent = totalVotes;
+            document.getElementById('statTotalVotes').textContent = totalVotes;
+            document.getElementById('statTotalVoters').textContent = totalVoters;
+            document.getElementById('statAvgScore').textContent = avgScore.toFixed(2);
+            document.getElementById('statParticipation').textContent = participationRate + '%';
+
+            // 显示获胜者和图表
+            displayWinnerAndChart(candidates);
+            
+            // 显示候选人详情
+            displayCandidatesDetails(candidates);
+        }
+
+        // 计算总体平均分
+        function calculateOverallAverage(candidates) {
+            if (!candidates || candidates.length === 0) return 0;
+            
+            let totalScore = 0;
+            let totalCandidates = 0;
+            
+            candidates.forEach(candidate => {
+                const score = candidate.weighted_avg_score || candidate.avg_score || 0;
+                if (score > 0) {
+                    totalScore += score;
+                    totalCandidates++;
+                }
+            });
+            
+            return totalCandidates > 0 ? totalScore / totalCandidates : 0;
+        }
+
+        // 显示获胜者和图表
+        function displayWinnerAndChart(candidates) {
+            let maxScore = 0;
+            let winner = null;
+
+            // 找出获胜者 - 使用平均分而不是总分
+            candidates.forEach(candidate => {
+                // 使用加权平均分或简单平均分
+                const score = candidate.weighted_avg_score || candidate.avg_score || 0;
+                if (score > maxScore) {
+                    maxScore = score;
+                    winner = candidate;
+                }
+            });
+
+            // 显示获胜者
+            if (winner && maxScore > 0) {
+                document.getElementById('winnerSection').style.display = 'block';
+                document.getElementById('winnerName').textContent = winner.name;
+                const displayScore = (winner.weighted_avg_score || winner.avg_score || 0).toFixed(2);
+                document.getElementById('winnerScore').textContent = `${displayScore} 分`;
+                
+                // 显示获胜者详情
+                const voteCount = winner.vote_count || 0;
+                const weightType = currentVotingData.weight_type;
+                const scoreType = weightType === 'equal' ? '平均分' : '加权平均分';
+                document.getElementById('winnerDetails').innerHTML = `
+                    <div class="winner-stats">
+                        <span>${scoreType}: ${displayScore} 分</span>
+                        <span>投票数: ${voteCount}</span>
+                        <span>权重类型: ${weightType === 'equal' ? '等权重' : '自定义权重'}</span>
+                    </div>
+                `;
+            }
+
+            // 生成图表
+            const chartContainer = document.getElementById('resultsChart');
+            chartContainer.innerHTML = '';
+
+            candidates.forEach(candidate => {
+                // 使用平均分而不是总分
+                const score = candidate.weighted_avg_score || candidate.avg_score || 0;
+                const percentage = maxScore > 0 ? (score / maxScore) * 100 : 0;
+                const isWinner = candidate === winner;
+                const voteCount = candidate.vote_count || 0;
+                
+                const bar = document.createElement('div');
+                bar.className = 'result-bar';
+                if (isWinner) bar.classList.add('winner');
+                
+                bar.innerHTML = `
+                    <div class="candidate-info">
+                        <div class="candidate-name">${candidate.name}</div>
+                        <div class="candidate-votes">${voteCount} 票</div>
+                    </div>
+                    <div class="bar-container">
+                        <div class="bar-fill" style="width: ${percentage}%"></div>
+                    </div>
+                    <div class="candidate-score">${score.toFixed(2)} 分</div>
+                `;
+                
+                chartContainer.appendChild(bar);
+            });
+        }
+
+        // 显示候选人详情
+        function displayCandidatesDetails(candidates) {
+            const container = document.getElementById('candidatesDetails');
+            
+            if (!candidates || candidates.length === 0) {
+                container.innerHTML = '<div class="no-data">暂无候选人数据</div>';
+                return;
+            }
+
+            let detailsHTML = '<div class="candidates-grid">';
+            
+            candidates.forEach(candidate => {
+                const score = candidate.weighted_avg_score || candidate.avg_score || 0;
+                const totalScore = candidate.weighted_total_score || candidate.total_score || 0;
+                const voteCount = candidate.vote_count || 0;
+                const weightType = currentVotingData.weight_type;
+                const scoreType = weightType === 'equal' ? '平均分' : '加权平均分';
+                
+                detailsHTML += `
+                    <div class="candidate-card">
+                        <div class="candidate-card-header">
+                            <h4>${candidate.name}</h4>
+                            <span class="candidate-rank">${score.toFixed(2)} 分</span>
+                        </div>
+                        <div class="candidate-card-stats">
+                            <div class="stat">
+                                <span class="stat-label">${scoreType}:</span>
+                                <span class="stat-value">${score.toFixed(2)}</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-label">总分数:</span>
+                                <span class="stat-value">${totalScore.toFixed(2)}</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-label">投票数:</span>
+                                <span class="stat-value">${voteCount}</span>
+                            </div>
+                            ${weightType === 'custom' ? `
+                            <div class="stat">
+                                <span class="stat-label">总权重:</span>
+                                <span class="stat-value">${candidate.total_weight || 0}</span>
+                            </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            detailsHTML += '</div>';
+            container.innerHTML = detailsHTML;
+        }
+
+        // 刷新结果
+        async function refreshResults() {
+            if (!currentVotingId) return;
+
+            try {
+                const resultsResult = await ZKUtils.getVotingResults(currentVotingId);
+                if (resultsResult.success) {
+                    displayResults(resultsResult.data);
+                    ZKUtils.showNotification('结果已刷新', 'success');
+                }
+            } catch (error) {
+                ZKUtils.showNotification('刷新失败: ' + error.message, 'error');
+            }
+        }
+
+        // 分享结果
+        function shareResults() {
+            if (!currentVotingData) return;
+
+            const text = `查看投票结果: ${currentVotingData.title}`;
+            const url = window.location.href;
+
+            if (navigator.share) {
+                navigator.share({
+                    title: '投票结果',
+                    text: text,
+                    url: url,
+                });
+            } else {
+                navigator.clipboard.writeText(url);
+                ZKUtils.showNotification('结果链接已复制到剪贴板', 'success');
+            }
+        }
+
+        // 页面加载
+        window.addEventListener('load', loadResults);
+    </script>
+</body>
+</html>

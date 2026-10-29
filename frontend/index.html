@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 零知识密封加权评审系统</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="zk-utils.js"></script>
+</head>
+<body>
+    <div class="auth-wrap">
+        <div class="auth-card">
+            <!-- 品牌区 -->
+            <div class="auth-brand">
+                <h1>
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 3l7 3v6c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6l7-3z"></path>
+                        <path d="M9.5 12.5l1.8 1.8 3.4-3.6"></path>
+                    </svg>
+                    零知识密封加权评审系统
+                </h1>
+                <p>基于 Pedersen 承诺与区块链的密封加权评审</p>
+            </div>
+
+            <!-- 登录 / 注册 切换（cascading：内容阶梯淡入 + 共享指示条级联滑动） -->
+            <div class="auth-tabs" id="authTabs">
+                <button class="tab-btn active" data-tab="login" onclick="switchTab('login')">登录</button>
+                <button class="tab-btn" data-tab="register" onclick="switchTab('register')">注册</button>
+                <span class="tab-indicator" aria-hidden="true"></span>
+            </div>
+
+            <!-- 登录表单 -->
+            <form id="loginForm" class="auth-form">
+                <div class="field">
+                    <label for="loginUsername">用户名或邮箱</label>
+                    <input type="text" class="input" id="loginUsername" placeholder="请输入用户名或邮箱" autocomplete="username" required>
+                </div>
+
+                <div class="field">
+                    <label for="loginPassword">密码</label>
+                    <input type="password" class="input" id="loginPassword" placeholder="请输入密码" autocomplete="current-password" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block" id="loginBtn">
+                    <span id="loginText">登录</span>
+                    <span id="loginLoading" style="display: none;">登录中...</span>
+                </button>
+            </form>
+
+            <!-- 注册表单 -->
+            <form id="registerForm" class="auth-form" style="display: none;">
+                <div class="field">
+                    <label for="registerUsername">用户名</label>
+                    <input type="text" class="input" id="registerUsername" placeholder="请输入用户名" required>
+                </div>
+
+                <div class="field">
+                    <label for="registerEmail">邮箱</label>
+                    <input type="email" class="input" id="registerEmail" placeholder="请输入邮箱" required>
+                </div>
+
+                <div class="field">
+                    <label for="registerPassword">密码</label>
+                    <input type="password" class="input" id="registerPassword" placeholder="请输入密码" required>
+                </div>
+
+                <div class="field">
+                    <label for="registerConfirm">确认密码</label>
+                    <input type="password" class="input" id="registerConfirm" placeholder="请确认密码" required>
+                </div>
+
+                <div class="field">
+                    <label for="registerRole">角色</label>
+                    <select class="input" id="registerRole" required>
+                        <option value="">选择角色</option>
+                        <option value="voter">评分者</option>
+                        <option value="publisher">活动发布者</option>
+                    </select>
+                </div>
+
+                <!-- 钱包地址：注册必须绑定钱包（用于链上白名单与签名） -->
+                <div id="realWalletSection">
+                    <div class="field">
+                        <label>钱包地址</label>
+                        <div class="wallet-connect-section">
+                            <button type="button" class="btn-wallet" id="connectWalletBtn" onclick="connectWalletForRegistration()">
+                                <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M10 13a5 5 0 0 0 7.1.1l3-3a5 5 0 0 0-7.1-7.1l-1.2 1.2"></path>
+                                    <path d="M14 11a5 5 0 0 0-7.1-.1l-3 3A5 5 0 0 0 11 21l1.2-1.2"></path>
+                                </svg>
+                                连接 MetaMask 钱包
+                            </button>
+                            <div id="walletInfo" style="display: none; margin-top: 12px;">
+                                <div class="wallet-connected">
+                                    <div>
+                                        <span class="text-muted">已连接</span>
+                                        <span id="connectedAddress" class="wallet-address"></span>
+                                    </div>
+                                    <button type="button" class="btn btn-small btn-secondary" onclick="disconnectWalletForRegistration()">
+                                        断开
+                                    </button>
+                                </div>
+                            </div>
+                            <input type="hidden" id="registerWallet" name="wallet_address">
+                        </div>
+                        <small class="field-hint">连接钱包后地址将自动填充</small>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block" id="registerBtn">
+                    <span id="registerText">注册</span>
+                    <span id="registerLoading" style="display: none;">注册中...</span>
+                </button>
+            </form>
+
+            <div class="auth-footer">
+                <p>评委签名由本人钱包完成 · Python Flask 后端 + Solidity 合约</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentWalletAddress = null;
+
+        // 切换登录/注册标签（cascading：新面板内容阶梯淡入 + 指示条级联滑动）
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tab === tab);
+            });
+
+            const panels = document.querySelectorAll('.auth-form');
+            panels.forEach(form => {
+                form.classList.remove('is-entering');
+                form.style.display = 'none';
+            });
+
+            const panel = tab === 'login'
+                ? document.getElementById('loginForm')
+                : document.getElementById('registerForm');
+
+            // 先显形再触发入场动画，保证 animation 每次都能重放
+            panel.style.display = 'block';
+            void panel.offsetWidth;
+            panel.classList.add('is-entering');
+            panel.addEventListener('animationend', function onEnterEnd() {
+                panel.classList.remove('is-entering');
+                panel.removeEventListener('animationend', onEnterEnd);
+            });
+
+            moveTabIndicator();
+
+            if (tab === 'register') {
+                // 切换到注册标签时检查钱包状态
+                checkWalletStatusForRegistration();
+            }
+        }
+
+        // 共享指示条滑到当前 Tab 下方（位置依据真实布局测量，宽度随内容自适应）
+        function moveTabIndicator() {
+            const tabs = document.getElementById('authTabs');
+            if (!tabs) return;
+            const active = tabs.querySelector('.tab-btn.active');
+            const indicator = tabs.querySelector('.tab-indicator');
+            if (!active || !indicator) return;
+            indicator.style.width = active.offsetWidth + 'px';
+            indicator.style.transform = `translateX(${active.offsetLeft}px)`;
+        }
+
+        // 为注册连接钱包
+        async function connectWalletForRegistration() {
+            try {
+                const result = await ZKUtils.wallet.connectWallet();
+
+                if (result.success) {
+                    currentWalletAddress = result.address;
+
+                    // 更新UI
+                    document.getElementById('connectWalletBtn').style.display = 'none';
+                    document.getElementById('walletInfo').style.display = 'block';
+                    document.getElementById('connectedAddress').textContent =
+                        `${result.address.substring(0, 8)}...${result.address.substring(36)}`;
+                    document.getElementById('registerWallet').value = result.address;
+
+                    ZKUtils.showNotification('钱包连接成功！', 'success');
+                } else {
+                    ZKUtils.showNotification('钱包连接失败: ' + result.error, 'error');
+                }
+            } catch (error) {
+                ZKUtils.showNotification('连接钱包时出错: ' + error.message, 'error');
+            }
+        }
+
+        // 为注册断开钱包
+        function disconnectWalletForRegistration() {
+            currentWalletAddress = null;
+            document.getElementById('connectWalletBtn').style.display = 'block';
+            document.getElementById('walletInfo').style.display = 'none';
+            document.getElementById('registerWallet').value = '';
+            ZKUtils.showNotification('钱包已断开', 'info');
+        }
+
+        // 检查注册页面的钱包状态
+        async function checkWalletStatusForRegistration() {
+            const wallet = await ZKUtils.wallet.getCurrentWallet();
+            if (wallet.success) {
+                // 自动填充已连接的钱包
+                currentWalletAddress = wallet.address;
+                document.getElementById('connectWalletBtn').style.display = 'none';
+                document.getElementById('walletInfo').style.display = 'block';
+                document.getElementById('connectedAddress').textContent =
+                    `${wallet.address.substring(0, 8)}...${wallet.address.substring(36)}`;
+                document.getElementById('registerWallet').value = wallet.address;
+            }
+        }
+
+        // 用户注册
+        document.getElementById('registerForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const username = document.getElementById('registerUsername').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+            const confirm = document.getElementById('registerConfirm').value;
+            const role = document.getElementById('registerRole').value;
+
+            // 基本验证
+            if (!username || !email || !password || !confirm || !role) {
+                alert('请填写所有必填字段！');
+                return;
+            }
+
+            if (password !== confirm) {
+                alert('密码确认不一致！');
+                return;
+            }
+
+            if (password.length < 6) {
+                alert('密码至少需要6个字符！');
+                return;
+            }
+
+            // 必须提供钱包地址
+            const wallet = document.getElementById('registerWallet').value;
+            if (!wallet) {
+                alert('请连接钱包地址！');
+                return;
+            }
+
+            // 显示加载状态
+            document.getElementById('registerText').style.display = 'none';
+            document.getElementById('registerLoading').style.display = 'inline';
+            document.getElementById('registerBtn').disabled = true;
+
+            try {
+                const result = await ZKUtils.register({
+                    username,
+                    email,
+                    password,
+                    role,
+                    wallet_address: wallet
+                });
+
+                if (result.success) {
+                    ZKUtils.showNotification('注册成功！', 'success');
+                    setTimeout(() => {
+                        switchTab('login');
+                        document.getElementById('registerForm').reset();
+                        disconnectWalletForRegistration();
+                    }, 1500);
+                } else {
+                    alert('注册失败: ' + result.message);
+                }
+            } catch (error) {
+                alert('注册失败: ' + error.message);
+            } finally {
+                // 恢复按钮状态
+                document.getElementById('registerText').style.display = 'inline';
+                document.getElementById('registerLoading').style.display = 'none';
+                document.getElementById('registerBtn').disabled = false;
+            }
+        });
+
+        // 修复的用户登录处理
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+
+            if (!username || !password) {
+                alert('请填写用户名和密码！');
+                return;
+            }
+
+            // 显示加载状态
+            document.getElementById('loginText').style.display = 'none';
+            document.getElementById('loginLoading').style.display = 'inline';
+            document.getElementById('loginBtn').disabled = true;
+
+            try {
+                console.log('开始登录...');
+                const result = await ZKUtils.login(username, password);
+
+                if (result.success) {
+                    console.log('登录成功，准备跳转...');
+                    ZKUtils.showNotification('登录成功！正在跳转...', 'success');
+
+                    // 关键修复：等待 token 存储完成并验证
+                    setTimeout(async () => {
+                        console.log('验证 token 存储...');
+                        const token = ZKUtils.getAuthToken();
+                        console.log('存储的 token:', token ? '存在' : '不存在');
+
+                        if (token) {
+                            try {
+                                // 验证 token 有效性
+                                const userResult = await ZKUtils.getCurrentUser();
+                                if (userResult.success) {
+                                    console.log('Token 验证成功，跳转到仪表板');
+                                    window.location.href = 'dashboard.html';
+                                } else {
+                                    console.error('Token 验证失败:', userResult.message);
+                                    ZKUtils.showNotification('登录状态验证失败，请重新登录', 'error');
+                                }
+                            } catch (error) {
+                                console.error('Token 验证异常:', error);
+                                ZKUtils.showNotification('登录状态验证异常，请重新登录', 'error');
+                            }
+                        } else {
+                            console.error('Token 存储失败');
+                            ZKUtils.showNotification('登录状态保存失败，请重新登录', 'error');
+                        }
+                    }, 1000);
+                } else {
+                    console.error('登录失败:', result.message);
+                    alert('登录失败: ' + result.message);
+                }
+            } catch (error) {
+                console.error('登录请求失败:', error);
+                let errorMessage = '登录失败: ';
+
+                if (error.message.includes('Failed to fetch')) {
+                    errorMessage += '无法连接到服务器，请检查后端服务是否运行';
+                } else if (error.message.includes('Network Error')) {
+                    errorMessage += '网络错误，请检查网络连接';
+                } else {
+                    errorMessage += error.message;
+                }
+
+                alert(errorMessage);
+            } finally {
+                // 恢复按钮状态
+                document.getElementById('loginText').style.display = 'inline';
+                document.getElementById('loginLoading').style.display = 'none';
+                document.getElementById('loginBtn').disabled = false;
+            }
+        });
+
+        // 检查是否已登录
+        window.addEventListener('load', async function() {
+            console.log('检查登录状态...');
+
+            // 先检查是否有 token
+            const token = ZKUtils.getAuthToken();
+            console.log('Token状态:', token ? '存在' : '不存在');
+
+            if (token) {
+                try {
+                    console.log('验证token有效性...');
+                    // 使用直接API调用避免循环
+                    const response = await fetch(`${ZKUtils.baseURL}/auth/me`, {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    if (response.ok) {
+                        const userResult = await response.json();
+                        if (userResult.success) {
+                            console.log('Token有效，跳转到仪表板');
+                            // 存储用户信息
+                            localStorage.setItem('userInfo', JSON.stringify(userResult.data));
+                            // 已登录，跳转到仪表板
+                            window.location.href = 'dashboard.html';
+                            return;
+                        }
+                    }
+
+                // Token无效，清除
+                    console.warn('Token无效，清除本地数据');
+                    ZKUtils.removeAuthToken();
+
+                } catch (error) {
+                    console.error('Token验证失败:', error);
+                    ZKUtils.removeAuthToken();
+                }
+            }
+
+            console.log('需要登录');
+            // 初始化钱包连接状态
+            await ZKUtils.initWalletConnection();
+        });
+
+        // 监听钱包账户变化
+        if (typeof window.ethereum !== 'undefined') {
+            window.ethereum.on('accountsChanged', (accounts) => {
+                if (accounts.length === 0) {
+                    // 用户断开连接
+                    disconnectWalletForRegistration();
+                } else if (currentWalletAddress !== accounts[0]) {
+                    // 用户切换账户，自动更新
+                    currentWalletAddress = accounts[0];
+                    if (document.getElementById('registerForm').style.display !== 'none') {
+                        document.getElementById('connectedAddress').textContent =
+                            `${accounts[0].substring(0, 8)}...${accounts[0].substring(36)}`;
+                        document.getElementById('registerWallet').value = accounts[0];
+                        ZKUtils.showNotification('钱包账户已切换', 'info');
+                    }
+                }
+            });
+        }
+
+        // 初始定位与窗口尺寸变化时重新测量指示条
+        window.addEventListener('load', moveTabIndicator);
+        window.addEventListener('resize', moveTabIndicator);
+    </script>
+</body>
+</html>

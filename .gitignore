@@ -1,0 +1,36 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- 环境变量（含数据库口令/JWT 密钥/部署者私钥，禁止提交）----
+.env
+.env.local
+backend/.env
+
+# ---- Node ----
+node_modules/
+
+# ---- 编译产物（由 hardhat compile 重新生成）----
+hardhat-project/cache/
+hardhat-project/artifacts/
+frontend/contract-artifacts/
+frontend/typechain-types/
+
+# ---- ZK 电路产物（按 circuits 的复现步骤可重新生成）----
+circuits/build/*
+!circuits/build/proof_fixture.json
+circuits/*.ptau
+circuits/*.zkey
+
+# ---- IDE / 系统 ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ---- 日志与本地运行数据 ----
+*.log
+backend/instance/

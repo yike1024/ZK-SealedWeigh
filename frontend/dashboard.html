@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>仪表板 - 零知识密封加权评审系统</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="zk-utils.js"></script>
+    <script src="zk-wallet.js"></script>
+    <script src="app-shell.js" defer></script>
+</head>
+<body>
+    <!-- 页面标题（壳层由 app-shell.js 统一注入） -->
+    <div class="page-header">
+        <h1 class="page-title">仪表板</h1>
+        <p class="page-desc">查看并参与你被邀请或被指派的密封评审活动</p>
+    </div>
+
+    <!-- 钱包状态 -->
+    <section class="card">
+        <div class="card-head">
+            <h3 style="display:flex;align-items:center;gap:8px;">
+                <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="3" y="6" width="18" height="13" rx="2"></rect>
+                    <path d="M3 10h18M16.5 14.5h.01"></path>
+                </svg>
+                钱包状态
+            </h3>
+            <button class="btn btn-small btn-secondary" onclick="window.location.href='wallet-management.html'">
+                管理钱包
+            </button>
+        </div>
+        <div id="walletManagement">
+            <div class="loading">检查钱包状态...</div>
+        </div>
+    </section>
+
+    <!-- 恢复与协作（P3.10） -->
+    <section class="card" id="recoveryOverviewCard">
+        <div class="card-head">
+            <h3>恢复与协作</h3>
+            <a class="btn btn-small btn-secondary" href="recovery.html">进入恢复中心</a>
+        </div>
+        <div id="recoveryOverview"><div class="loading">检查恢复状态...</div></div>
+    </section>
+
+    <!-- 发布者功能 -->
+    <section id="publisherSection" class="card" style="display: none;">
+        <div class="card-head"><h3>活动发布者</h3></div>
+        <div class="action-grid">
+            <div class="action-card" onclick="createNewVoting()">
+                <div class="action-icon">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                </div>
+                <h3>创建评审活动</h3>
+                <p>配置候选、评委与权重</p>
+            </div>
+            <div class="action-card" onclick="viewMyVotings()">
+                <div class="action-icon">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h11M8 12h11M8 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"></path></svg>
+                </div>
+                <h3>我的活动</h3>
+                <p>管理已创建的评审活动</p>
+            </div>
+            <div class="action-card" onclick="viewAllResults()">
+                <div class="action-icon">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"></path><path d="M8 16v-5M12.5 16V8M17 16v-3"></path></svg>
+                </div>
+                <h3>统计报表</h3>
+                <p>查看全部活动结果</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- 评分者功能 -->
+    <section id="voterSection" class="card" style="display: none;">
+        <div class="card-head"><h3>评分者</h3></div>
+        <div class="action-grid">
+            <div class="action-card" onclick="viewAvailableVotings()">
+                <div class="action-icon">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+                </div>
+                <h3>待参与活动</h3>
+                <p>查看需要你参与的评审</p>
+            </div>
+            <div class="action-card" onclick="viewMyScores()">
+                <div class="action-icon">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4-1 9.5-9.5a2.1 2.1 0 0 0-3-3L5 16l-1 4z"></path><path d="M13.5 6.5l3 3"></path></svg>
+                </div>
+                <h3>我的参与</h3>
+                <p>查看已提交承诺与评分的活动</p>
+            </div>
+            <div class="action-card" onclick="viewResults()">
+                <div class="action-icon">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"></path><path d="M6 5H4v2a3 3 0 0 0 3 3M18 5h2v2a3 3 0 0 1-3 3M9 20h6M12 14v6"></path></svg>
+                </div>
+                <h3>查看结果</h3>
+                <p>查看活动最终加权结果</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- 活动列表 -->
+    <section class="card">
+        <div class="card-head">
+            <h3 id="activitiesTitle">我的活动</h3>
+        </div>
+        <div id="activitiesList" class="activities-list">
+            <div class="loading">加载中...</div>
+        </div>
+    </section>
+
+    <!-- 统计概览 -->
+    <section class="card">
+        <div class="card-head"><h3>统计概览</h3></div>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="totalVotings">0</div>
+                <div class="stat-label">总活动数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="participatedCount">0</div>
+                <div class="stat-label">已参与</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="pendingCount">0</div>
+                <div class="stat-label">待参与</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="completionRate">0%</div>
+                <div class="stat-label">完成率</div>
+            </div>
+        </div>
+    </section>
+
+    <script>
+        let currentUser = null;
+        let allVotings = [];
+        let currentFilter = 'all';
+
+        // 阶段常量 - 统一前后端阶段定义
+        const VOTING_PHASES = {
+            COMMIT: 'commit',
+            SCORING: 'scoring',
+            COMPLETED: 'completed',
+            CANCELLED: 'cancelled'
+        };
+
+        // 阶段显示名称映射
+        const PHASE_DISPLAY_NAMES = {
+            'commit': '承诺阶段',
+            'scoring': '评分阶段',
+            'completed': '已完成',
+            'cancelled': '已取消'
+        };
+
+        // 获取阶段显示名称
+        function getPhaseDisplayName(phase) {
+            return PHASE_DISPLAY_NAMES[phase] || phase;
+        }
+
+        // 检查登录状态
+        async function checkAuth() {
+            if (!ZKUtils.isLoggedIn()) {
+                window.location.href = 'index.html';
+                return false;
+            }
+
+            try {
+                const result = await ZKUtils.getCurrentUser();
+                if (result.success) {
+                    currentUser = result.data;
+                    return true;
+                } else {
+                    ZKUtils.removeAuthToken();
+                    window.location.href = 'index.html';
+                    return false;
+                }
+            } catch (error) {
+                console.error('认证失败:', error);
+                ZKUtils.removeAuthToken();
+                window.location.href = 'index.html';
+                return false;
+            }
+        }
+
+        // 加载用户信息
+        async function loadUserInfo() {
+            if (!await checkAuth()) return;
+
+            document.getElementById('currentUserName').textContent = currentUser.username;
+            document.getElementById('currentUserRole').textContent =
+                currentUser.role === 'publisher' ? '活动发布者' : '评分者';
+            document.getElementById('currentUserRole').className = `user-role ${currentUser.role}`;
+
+            // 显示钱包状态
+            await displayWalletStatus();
+
+            // 显示对应的功能区域
+            if (currentUser.role === 'publisher') {
+                document.getElementById('publisherSection').style.display = 'block';
+                document.getElementById('activitiesTitle').textContent = '我创建的活动';
+            } else {
+                document.getElementById('voterSection').style.display = 'block';
+                document.getElementById('activitiesTitle').textContent = '我参与的活动';
+            }
+
+            await loadDashboardData();
+            await loadRecoveryOverview();
+        }
+
+        /* ---------------- 恢复与协作卡片（P3.10） ---------------- */
+
+        function escapeRecoveryText(value) {
+            return String(value === null || value === undefined ? '' : value)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        async function loadRecoveryOverview() {
+            const box = document.getElementById('recoveryOverview');
+            if (!box || !ZKUtils || typeof ZKUtils.apiCall !== 'function') return;
+            try {
+                const result = await ZKUtils.apiCall('/recovery/overview');
+                const data = (result && result.data) || {};
+                const pending = Number(data.pendingAssist) || 0;
+                const open = Number(data.myOpenRequests) || 0;
+                const enrolled = Number(data.enrolledCount) || 0;
+                const active = Number(data.activeVotingCount) || 0;
+                const items = data.items || [];
+
+                const pendingHtml = items.length ? `
+                    <div class="activities-list" style="margin-top: 16px;">
+                        ${items.slice(0, 3).map(item => {
+                            const title = escapeRecoveryText(item.votingTitle);
+                            const requester = escapeRecoveryText(
+                                item.requester && item.requester.username);
+                            const detail = item.role === 'requester'
+                                ? `你发起的恢复请求：已收集 ${item.collected}/${item.threshold}`
+                                : `${requester} 请求恢复，等待你投递份额（${item.collected}/${item.threshold}）`;
+                            return `<a class="activity-item pending" style="text-decoration: none;"
+                                       href="recovery.html?id=${item.votingId}">
+                                <div>
+                                    <div class="activity-title">${title}</div>
+                                    <div class="activity-description">${detail}</div>
+                                </div>
+                            </a>`;
+                        }).join('')}
+                    </div>` : '<p class="field-hint" style="margin-top: 12px;">暂无待处理的恢复事项。</p>';
+
+                box.innerHTML = `
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-number">${pending}</div>
+                            <div class="stat-label">待协助请求</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number">${open}</div>
+                            <div class="stat-label">我的恢复请求</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number">${enrolled}/${active}</div>
+                            <div class="stat-label">已登记恢复材料</div>
+                        </div>
+                    </div>
+                    ${pendingHtml}`;
+            } catch (error) {
+                box.innerHTML = `
+                    <div class="status warning">
+                        <p>恢复状态暂不可用：${escapeRecoveryText(error.message)}</p>
+                    </div>`;
+            }
+        }
+
+        // 显示钱包状态
+        async function displayWalletStatus() {
+            const walletBadge = document.getElementById('walletStatusBadge');
+            const walletManagement = document.getElementById('walletManagement');
+            let walletStatus = null;
+
+            // 1. 基础依赖检查
+            if (!window.ZKUtils) {
+                console.error('核心工具类ZKUtils未加载');
+                walletManagement.innerHTML = `
+                    <div class="status error">
+                        <p><strong>系统核心模块未加载</strong></p>
+                        <p>请刷新页面重试，如问题持续请联系管理员</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // 2. 钱包模块存在性检查
+            if (!ZKUtils.wallet || typeof ZKUtils.wallet !== 'object') {
+                console.error('钱包工具模块未正确初始化');
+                walletManagement.innerHTML = `
+                    <div class="status error">
+                        <p><strong>钱包功能未初始化</strong></p>
+                        <p>请检查钱包插件是否正确加载</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // 3. 钱包方法存在性检查
+            if (typeof ZKUtils.wallet.getCurrentWallet !== 'function') {
+                console.error('钱包工具缺少必要方法:getCurrentWallet');
+                walletManagement.innerHTML = `
+                    <div class="status error">
+                        <p><strong>钱包功能不完整</strong></p>
+                        <p>系统版本不兼容，请更新至最新版本</p>
+                    </div>
+                `;
+                return;
+            }
+
+            try {
+                // 获取钱包状态
+                const statusResult = await ZKUtils.apiCall('/auth/wallet/status');
+                if (statusResult.success && statusResult.data) {
+                    walletStatus = statusResult.data;
+
+                    if (walletStatus.has_wallet) {
+                        const shortAddress = `${walletStatus.wallet_address.substring(0, 6)}...${walletStatus.wallet_address.substring(38)}`;
+                        document.getElementById('walletAddressShort').textContent = shortAddress;
+                        walletBadge.style.display = 'inline-flex';
+                        walletBadge.classList.remove('is-warn');
+                        walletBadge.title = `钱包地址: ${walletStatus.wallet_address}`;
+
+                        walletManagement.innerHTML = `
+                            <div class="status success">
+                                <p><strong>钱包已连接</strong></p>
+                                <p>地址: <span class="mono">${walletStatus.wallet_address}</span></p>
+                                <p>状态: 已同步到服务器</p>
+                            </div>
+                        `;
+                    } else {
+                        walletBadge.style.display = 'none';
+                        walletManagement.innerHTML = `
+                            <div class="status warning">
+                                <p><strong>未连接钱包</strong></p>
+                                <p>连接钱包以使用完整的区块链功能</p>
+                                <div style="margin-top: 12px;">
+                                    <button class="btn btn-small" onclick="connectWalletForDashboard()">
+                                        连接钱包
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    }
+                } else {
+                    throw new Error(statusResult.message || '获取钱包状态失败');
+                }
+
+                // 检查当前连接的钱包
+                if (walletStatus && walletStatus.has_wallet) {
+                    try {
+                        const wallet = await ZKUtils.wallet.getCurrentWallet();
+                        if (wallet.success && walletStatus.wallet_address) {
+                            if (wallet.address.toLowerCase() !== walletStatus.wallet_address.toLowerCase()) {
+                                walletBadge.classList.add('is-warn');
+                                walletBadge.title += ' (与当前连接的钱包不匹配)';
+                                walletManagement.innerHTML = `
+                                    <div class="status warning">
+                                        <p><strong>钱包不匹配</strong></p>
+                                        <p>服务器钱包: <span class="mono">${walletStatus.wallet_address}</span></p>
+                                        <p>当前连接: <span class="mono">${wallet.address}</span></p>
+                                        <div style="margin-top: 12px; display:flex; gap:8px;">
+                                            <button class="btn btn-small" onclick="updateWalletOnServer()">
+                                                同步到服务器
+                                            </button>
+                                            <button class="btn btn-small btn-secondary" onclick="disconnectWalletForDashboard()">
+                                                断开连接
+                                            </button>
+                                        </div>
+                                    </div>
+                                `;
+                            }
+                        } else {
+                            console.warn('获取当前钱包信息失败:', wallet.message);
+                        }
+                    } catch (walletError) {
+                        console.error('检查钱包匹配状态失败:', walletError);
+                        // 仅记录错误，不阻断其他功能
+                    }
+                }
+            } catch (error) {
+                console.error('获取钱包状态失败:', error);
+                walletManagement.innerHTML = `
+                    <div class="status error">
+                        <p><strong>获取钱包状态失败</strong></p>
+                        <p>错误: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // 为仪表板连接钱包
+        async function connectWalletForDashboard() {
+            try {
+                const result = await ZKUtils.wallet.connectWallet();
+                if (result.success) {
+                    ZKUtils.showNotification('钱包连接成功！', 'success');
+                    await updateWalletOnServer();
+                } else {
+                    ZKUtils.showNotification('钱包连接失败: ' + result.error, 'error');
+                }
+            } catch (error) {
+                ZKUtils.showNotification('连接钱包时出错: ' + error.message, 'error');
+            }
+        }
+
+        // 为仪表板断开钱包
+        async function disconnectWalletForDashboard() {
+            try {
+                const result = await ZKUtils.wallet.disconnectWallet();
+                if (result.success) {
+                    ZKUtils.showNotification('钱包已断开', 'info');
+                    await displayWalletStatus();
+                }
+            } catch (error) {
+                ZKUtils.showNotification('断开钱包时出错: ' + error.message, 'error');
+            }
+        }
+
+        // 更新钱包到服务器
+        async function updateWalletOnServer() {
+            try {
+                const wallet = await ZKUtils.wallet.getCurrentWallet();
+                if (!wallet.success) {
+                    ZKUtils.showNotification('请先连接钱包', 'error');
+                    return;
+                }
+
+                const result = await ZKUtils.apiCall('/auth/wallet/connect', {
+                    method: 'POST',
+                    body: {
+                        wallet_address: wallet.address
+                    }
+                });
+
+                if (result.success) {
+                    ZKUtils.showNotification('钱包地址已同步到服务器！', 'success');
+                    // 更新当前用户信息
+                    currentUser = result.data;
+                    await displayWalletStatus();
+                } else {
+                    ZKUtils.showNotification('同步失败: ' + result.message, 'error');
+                }
+            } catch (error) {
+                ZKUtils.showNotification('同步失败: ' + error.message, 'error');
+            }
+        }
+
+        // 加载仪表板数据
+        async function loadDashboardData() {
+            try {
+                console.log('开始加载仪表板数据...');
+
+                // 获取所有活动
+                const result = await ZKUtils.getVotings(false);
+                console.log('获取活动结果:', result);
+
+                if (result.success) {
+                    allVotings = result.data || [];
+                    console.log('所有活动数据:', allVotings);
+                    displayActivities(allVotings);
+                    updateStatistics(allVotings);
+                } else {
+                    throw new Error(result.message || '获取活动列表失败');
+                }
+            } catch (error) {
+                console.error('加载仪表板数据失败:', error);
+                document.getElementById('activitiesList').innerHTML =
+                    `<div class="alert is-danger">加载失败: ${error.message}</div>`;
+            }
+        }
+
+        // 显示活动列表
+        function displayActivities(votings) {
+            const container = document.getElementById('activitiesList');
+
+            if (!votings || votings.length === 0) {
+                container.innerHTML = '<div class="no-data">暂无活动</div>';
+                return;
+            }
+
+            // 根据当前用户角色和过滤条件显示活动
+            let filteredVotings = votings;
+
+            if (currentUser.role === 'publisher') {
+                // 发布者：显示自己创建的活动
+                filteredVotings = votings.filter(voting => voting.creator_id === currentUser.id);
+            } else {
+                // 评分者：显示自己被邀请的活动
+                filteredVotings = votings.filter(voting =>
+                    voting.voters && voting.voters.some(voter => voter.id === currentUser.id)
+                );
+
+                // 应用过滤器
+                if (currentFilter === 'available') {
+                    filteredVotings = filteredVotings.filter(voting => canUserParticipate(voting));
+                } else if (currentFilter === 'my') {
+                    filteredVotings = filteredVotings.filter(voting =>
+                        hasUserCommitted(voting) || hasUserScored(voting)
+                    );
+                }
+            }
+
+            if (filteredVotings.length === 0) {
+                let message = '暂无相关活动';
+                if (currentUser.role === 'voter') {
+                    if (currentFilter === 'available') {
+                        message = '暂无待参与的活动';
+                    } else if (currentFilter === 'my') {
+                        message = '暂无已参与的活动';
+                    }
+                }
+                container.innerHTML = `<div class="no-data">${message}</div>`;
+                return;
+            }
+
+            container.innerHTML = filteredVotings.map(voting => {
+                const status = getActivityStatus(voting);
+                const canParticipate = canUserParticipate(voting);
+                const hasCommitted = hasUserCommitted(voting);
+                const hasScored = hasUserScored(voting);
+
+                let actionButton = '';
+                let buttonText = '';
+
+                if (currentUser.role === 'publisher') {
+                    actionButton = `
+                        <button class="btn btn-small" onclick="manageVoting(${voting.id})">管理</button>
+                        <button class="btn btn-small btn-secondary" onclick="viewVotingResults(${voting.id})">结果</button>
+                    `;
+                } else {
+                    if (canParticipate) {
+                        if (voting.phase === VOTING_PHASES.COMMIT) {
+                            buttonText = '提交承诺';
+                        } else if (voting.phase === VOTING_PHASES.SCORING) {
+                            buttonText = '去评分';
+                        }
+                        actionButton = `<button class="btn btn-small" onclick="scoreVoting(${voting.id})">${buttonText}</button>`;
+                    } else {
+                        actionButton = `<button class="btn btn-small btn-secondary" onclick="viewVotingResults(${voting.id})">查看</button>`;
+                    }
+                }
+
+                return `
+                    <div class="activity-item ${status}">
+                        <div class="activity-title">${voting.title}</div>
+                        <div class="activity-actions">
+                            ${actionButton}
+                            ${currentUser.role === 'voter' && hasCommitted ?
+                                `<span class="committed-badge">已承诺</span>` : ''
+                            }
+                            ${currentUser.role === 'voter' && hasScored ?
+                                `<span class="scored-badge">已评分</span>` : ''
+                            }
+                        </div>
+                        <div class="activity-description">${voting.description || '暂无描述'}</div>
+                        <div class="activity-meta">
+                            <span class="activity-status ${status}">${getStatusText(status)}</span>
+                            <span class="activity-time">${ZKUtils.formatDate(voting.created_at)}</span>
+                            <span class="activity-phase">阶段: ${getPhaseText(voting.phase)}</span>
+                            ${currentUser.role === 'voter' ?
+                                `<span class="activity-weight">权重: ${getUserWeight(voting).toFixed(1)}</span>` :
+                                ''
+                            }
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 检查用户是否可以参与活动（包括承诺阶段和评分阶段）
+        function canUserParticipate(voting) {
+            if (currentUser.role === 'publisher') return false;
+
+            // 检查用户是否在投票者列表中
+            const isVoter = voting.voters && voting.voters.some(voter => voter.id === currentUser.id);
+            if (!isVoter) return false;
+
+            // 在承诺阶段，用户可以提交承诺
+            if (voting.phase === VOTING_PHASES.COMMIT) {
+                const hasCommitted = voting.commitments && voting.commitments.some(commitment => commitment.voter_id === currentUser.id);
+                return !hasCommitted; // 如果还没提交承诺，就可以参与
+            }
+
+            // 在评分阶段，用户可以提交评分（前提是已经提交了承诺）
+            if (voting.phase === VOTING_PHASES.SCORING) {
+                const hasCommitted = voting.commitments && voting.commitments.some(commitment => commitment.voter_id === currentUser.id);
+                const hasScored = voting.scores && voting.scores.some(score => score.voter_id === currentUser.id);
+                return hasCommitted && !hasScored; // 已经提交承诺但还没评分
+            }
+
+            return false;
+        }
+
+        // 检查用户是否可以评分（仅评分阶段）
+        function canUserScore(voting) {
+            if (currentUser.role === 'publisher') return false;
+            if (voting.phase !== VOTING_PHASES.SCORING) return false;
+
+            // 检查用户是否在投票者列表中
+            const isVoter = voting.voters && voting.voters.some(voter => voter.id === currentUser.id);
+            if (!isVoter) return false;
+
+            // 检查用户是否已经提交过承诺
+            const hasCommitted = voting.commitments && voting.commitments.some(commitment => commitment.voter_id === currentUser.id);
+            if (!hasCommitted) return false;
+
+            // 检查用户是否已经提交过评分
+            const hasScored = voting.scores && voting.scores.some(score => score.voter_id === currentUser.id);
+
+            return !hasScored;
+        }
+
+        // 检查用户是否已提交承诺
+        function hasUserCommitted(voting) {
+            return voting.commitments && voting.commitments.some(commitment => commitment.voter_id === currentUser.id);
+        }
+
+        // 检查用户是否已提交评分
+        function hasUserScored(voting) {
+            return voting.scores && voting.scores.some(score => score.voter_id === currentUser.id);
+        }
+
+        // 获取用户权重
+        function getUserWeight(voting) {
+            if (!voting.voters) return 1.0;
+            const voter = voting.voters.find(v => v.id === currentUser.id);
+            return voter ? voter.weight : 1.0;
+        }
+
+        // 更新统计信息
+        function updateStatistics(votings) {
+            let userActivities = [];
+
+            if (currentUser.role === 'publisher') {
+                userActivities = votings.filter(voting => voting.creator_id === currentUser.id);
+            } else {
+                userActivities = votings.filter(voting =>
+                    voting.voters && voting.voters.some(voter => voter.id === currentUser.id)
+                );
+            }
+
+            const totalVotings = userActivities.length;
+            const participatedCount = userActivities.filter(v =>
+                hasUserCommitted(v) || hasUserScored(v)
+            ).length;
+            const pendingCount = userActivities.filter(v =>
+                canUserParticipate(v)
+            ).length;
+            const completionRate = totalVotings > 0 ?
+                Math.round((participatedCount / totalVotings) * 100) : 0;
+
+            document.getElementById('totalVotings').textContent = totalVotings;
+            document.getElementById('participatedCount').textContent = participatedCount;
+            document.getElementById('pendingCount').textContent = pendingCount;
+            document.getElementById('completionRate').textContent = completionRate + '%';
+        }
+
+        // 工具函数
+        function getActivityStatus(voting) {
+            if (voting.phase === VOTING_PHASES.COMPLETED) return 'completed';
+            if (voting.scores && voting.scores.some(s => s.voter_id === currentUser.id)) return 'scored';
+            if (voting.commitments && voting.commitments.some(c => c.voter_id === currentUser.id)) return 'committed';
+            return 'pending';
+        }
+
+        function getStatusText(status) {
+            const statusMap = {
+                'pending': '待参与',
+                'committed': '已承诺',
+                'scored': '已评分',
+                'completed': '已完成'
+            };
+            return statusMap[status] || status;
+        }
+
+        function getPhaseText(phase) {
+            return getPhaseDisplayName(phase);
+        }
+
+        // 导航函数
+        function createNewVoting() {
+            window.location.href = 'create-voting.html';
+        }
+
+        function viewMyVotings() {
+            currentFilter = 'all';
+            displayActivities(allVotings);
+        }
+
+        function viewAvailableVotings() {
+            currentFilter = 'available';
+            displayActivities(allVotings);
+        }
+
+        function viewMyScores() {
+            currentFilter = 'my';
+            displayActivities(allVotings);
+        }
+
+        function viewResults() {
+            window.location.href = 'results.html';
+        }
+
+        function viewAllResults() {
+            window.location.href = 'results.html?filter=all';
+        }
+
+        function manageVoting(votingId) {
+            console.log('跳转到管理页面，投票ID:', votingId);
+            if (!votingId || votingId === 'undefined' || votingId === 'null') {
+                ZKUtils.showNotification('投票ID无效，无法跳转', 'error');
+                return;
+            }
+
+            // 验证 votingId 是数字
+            if (isNaN(parseInt(votingId))) {
+                console.error('投票ID不是有效数字:', votingId);
+                ZKUtils.showNotification('投票ID格式错误', 'error');
+                return;
+            }
+
+            // 检查用户角色，只有发布者才能访问管理页面
+            if (currentUser.role !== 'publisher') {
+                ZKUtils.showNotification('只有活动发布者可以管理投票活动', 'error');
+                return;
+            }
+
+            const url = `admin.html?id=${votingId}`;
+            console.log('跳转到管理页面:', url);
+            window.location.href = url;
+        }
+
+        // 参与评分
+        function scoreVoting(votingId) {
+            console.log('跳转到评分页面，投票ID:', votingId);
+
+            // 确保 votingId 有效
+            if (!votingId || votingId === 'undefined' || votingId === 'null') {
+                console.error('投票ID无效:', votingId);
+                ZKUtils.showNotification('投票ID无效，无法跳转', 'error');
+                return;
+            }
+
+            // 验证 votingId 是数字
+            if (isNaN(parseInt(votingId))) {
+                console.error('投票ID不是有效数字:', votingId);
+                ZKUtils.showNotification('投票ID格式错误', 'error');
+                return;
+            }
+
+            console.log('投票ID有效，准备跳转');
+
+            // 使用更安全的方式跳转
+            try {
+                const url = `score.html?id=${votingId}`;
+                console.log('跳转URL:', url);
+                window.location.href = url;
+            } catch (error) {
+                console.error('跳转失败:', error);
+                ZKUtils.showNotification('页面跳转失败，请刷新重试', 'error');
+            }
+        }
+
+        function viewVotingResults(votingId) {
+            console.log('跳转到结果页面，投票ID:', votingId);
+            if (!votingId || votingId === 'undefined' || votingId === 'null') {
+                ZKUtils.showNotification('投票ID无效，无法跳转', 'error');
+                return;
+            }
+            window.location.href = `results.html?id=${votingId}`;
+        }
+
+        // 页面加载（退出登录由 app-shell.js 统一提供）
+        window.addEventListener('load', loadUserInfo);
+    </script>
+</body>
+</html>

@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>权重管理 - 零知识密封加权评审系统</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="zk-utils.js"></script>
+    <script src="app-shell.js" defer></script>
+</head>
+<body>
+    <div class="page-header">
+        <h1 class="page-title">权重管理</h1>
+        <p class="page-desc">管理评分者权重配置 · 仅在承诺阶段可修改，评分开始后锁定</p>
+    </div>
+
+    <div id="loading" class="card">
+        <div class="loading">加载权重配置...</div>
+    </div>
+
+    <div id="weightContent" style="display: none;">
+        <!-- 投票信息 -->
+        <div class="card">
+            <h2 id="votingTitle"></h2>
+            <div class="weight-meta">
+                <span class="badge" id="weightTypeBadge">等权重</span>
+                <span class="phase-info">阶段: <span id="currentPhase"></span></span>
+                <span class="voter-count">评分者: <span id="voterCount">0</span> 人</span>
+            </div>
+        </div>
+
+        <!-- 权重统计 -->
+        <div class="card">
+            <h3>权重统计</h3>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-number" id="avgWeight">1.0</div>
+                    <div class="stat-label">平均权重</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" id="minWeight">1.0</div>
+                    <div class="stat-label">最小权重</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" id="maxWeight">1.0</div>
+                    <div class="stat-label">最大权重</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" id="totalWeight">0</div>
+                    <div class="stat-label">总权重</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 权重编辑 -->
+        <div class="card" id="weightEditor">
+            <h3>评分者权重配置</h3>
+            <div class="weight-actions">
+                <button class="btn" onclick="enableWeightEditing()">编辑权重</button>
+                <button class="btn btn-secondary" onclick="resetWeights()">重置为默认</button>
+                <button class="btn btn-success" id="saveWeightsBtn" style="display: none;" onclick="saveWeights()">保存更改</button>
+                <button class="btn btn-secondary" id="cancelEditBtn" style="display: none;" onclick="cancelWeightEditing()">取消编辑</button>
+            </div>
+
+            <div class="voters-list">
+                <table class="table weight-table">
+                    <thead>
+                        <tr>
+                            <th>评分者</th>
+                            <th>当前权重</th>
+                            <th>状态</th>
+                            <th id="editColumn" style="display: none;">新权重</th>
+                        </tr>
+                    </thead>
+                    <tbody id="votersTableBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 权重说明 -->
+        <div class="card">
+            <h3>权重说明</h3>
+            <div class="weight-explanation">
+                <p><strong>权重作用:</strong> 评分者的投票分数会乘以权重值计入总分</p>
+                <p><strong>示例:</strong> 如果评分者A权重为2.0，评分8分，则实际计入16分</p>
+                <p><strong>修改限制:</strong> 只能在承诺阶段修改权重，评分开始后权重锁定</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentVotingId = null;
+        let currentWeights = [];
+        let isEditing = false;
+
+        // 页面加载
+        window.addEventListener('load', async function() {
+            if (!ZKUtils.isLoggedIn()) {
+                window.location.href = 'index.html';
+                return;
+            }
+
+            // 获取URL参数
+            const urlParams = new URLSearchParams(window.location.search);
+            currentVotingId = urlParams.get('id');
+
+            if (!currentVotingId) {
+                // 侧边导航直接进入时没有 ?id=：就地给出可选活动，不再弹窗并跳回仪表板
+                await ZKShell.renderVotingPicker({
+                    containerId: 'weightContent',
+                    loadingId: 'loading',
+                    target: 'weight-management.html',
+                    action: '配置权重'
+                });
+                return;
+            }
+
+            await loadWeightManagement();
+        });
+
+        async function loadWeightManagement() {
+            try {
+                const result = await ZKUtils.getVotingWeights(currentVotingId);
+                
+                if (result.success) {
+                    displayWeightManagement(result.data);
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                document.getElementById('loading').style.display = 'none';
+                alert('加载权重配置失败: ' + error.message);
+                window.location.href = 'dashboard.html';
+            }
+        }
+
+        function displayWeightManagement(data) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('weightContent').style.display = 'block';
+
+            // 后端返回的是评审活动本体（扁平结构），此处兼容嵌套 voting_info 形态
+            const votingInfo = data.voting_info || data;
+            const stats = data.weight_statistics || {};
+
+            // 评分者参与状态：优先用后端字段，缺失时由承诺记录推导
+            const commitments = data.commitments || [];
+            const voters = (data.voters || []).map(voter => Object.assign({}, voter, {
+                has_committed: voter.has_committed != null
+                    ? voter.has_committed
+                    : commitments.some(c => c.voter_id === voter.id)
+            }));
+
+            // 更新投票信息
+            document.getElementById('votingTitle').textContent = votingInfo.title || '';
+            document.getElementById('weightTypeBadge').textContent = getWeightTypeLabel(votingInfo.weight_type);
+            document.getElementById('currentPhase').textContent = getPhaseLabel(votingInfo.phase);
+            document.getElementById('voterCount').textContent =
+                stats.total_voters != null ? stats.total_voters : voters.length;
+
+            // 更新统计信息（字段缺失时兜底为 0，避免整页跳回仪表板）
+            document.getElementById('avgWeight').textContent = ZKUtils.formatNumber(stats.avg_weight);
+            document.getElementById('minWeight').textContent = ZKUtils.formatNumber(stats.min_weight);
+            document.getElementById('maxWeight').textContent = ZKUtils.formatNumber(stats.max_weight);
+            document.getElementById('totalWeight').textContent = ZKUtils.formatNumber(stats.total_weight, 1);
+
+            // 保存当前权重数据
+            currentWeights = voters;
+
+            // 显示投票者列表
+            displayVotersTable(voters, votingInfo.phase);
+        }
+
+        function displayVotersTable(voters, phase) {
+            const tbody = document.getElementById('votersTableBody');
+            tbody.innerHTML = '';
+
+            voters.forEach(voter => {
+                const status = voter.has_committed ? '已提交承诺' : 
+                             voter.scored_count > 0 ? '已评分' : '待参与';
+                
+                const statusClass = voter.has_committed ? 'committed' : 
+                                  voter.scored_count > 0 ? 'scored' : 'pending';
+
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>
+                        <div class="voter-info">
+                            <strong>${voter.username}</strong>
+                            <div class="voter-email">${voter.email}</div>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="weight-value">${voter.weight.toFixed(2)}</span>
+                    </td>
+                    <td>
+                        <span class="status-badge ${statusClass}">${status}</span>
+                    </td>
+                    <td id="edit-cell-${voter.id}" style="display: none;">
+                        <input type="number" class="input weight-input" 
+                               value="${voter.weight}" step="0.1" min="0" max="10"
+                               data-voter-id="${voter.id}">
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function enableWeightEditing() {
+            if (isEditing) return;
+
+            // 显示编辑列
+            document.getElementById('editColumn').style.display = 'table-cell';
+            document.querySelectorAll('[id^="edit-cell-"]').forEach(cell => {
+                cell.style.display = 'table-cell';
+            });
+
+            // 显示保存按钮
+            document.getElementById('saveWeightsBtn').style.display = 'inline-block';
+            document.getElementById('cancelEditBtn').style.display = 'inline-block';
+
+            isEditing = true;
+        }
+
+        function cancelWeightEditing() {
+            if (!isEditing) return;
+
+            // 隐藏编辑列
+            document.getElementById('editColumn').style.display = 'none';
+            document.querySelectorAll('[id^="edit-cell-"]').forEach(cell => {
+                cell.style.display = 'none';
+            });
+
+            // 隐藏保存按钮
+            document.getElementById('saveWeightsBtn').style.display = 'none';
+            document.getElementById('cancelEditBtn').style.display = 'none';
+
+            isEditing = false;
+        }
+
+        async function saveWeights() {
+            if (!isEditing) return;
+
+            const updates = [];
+            const weightInputs = document.querySelectorAll('.weight-input');
+
+            for (const input of weightInputs) {
+                const voterId = input.dataset.voterId;
+                const newWeight = parseFloat(input.value);
+
+                if (isNaN(newWeight) || newWeight < 0) {
+                    alert(`无效的权重值: ${input.value}`);
+                    return;
+                }
+
+                updates.push({
+                    voter_id: parseInt(voterId),
+                    weight: newWeight
+                });
+            }
+
+            try {
+                const result = await ZKUtils.updateBatchWeights(currentVotingId, { updates });
+
+                if (result.success) {
+                    ZKUtils.showNotification('权重更新成功', 'success');
+                    cancelWeightEditing();
+                    await loadWeightManagement(); // 重新加载数据
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                ZKUtils.showNotification('权重更新失败: ' + error.message, 'error');
+            }
+        }
+
+        function resetWeights() {
+            if (!confirm('确定要将所有权重置为1.0吗？')) return;
+
+            const updates = currentWeights.map(voter => ({
+                voter_id: voter.id,
+                weight: 1.0
+            }));
+
+            // 直接调用API重置
+            ZKUtils.updateBatchWeights(currentVotingId, { updates })
+                .then(result => {
+                    if (result.success) {
+                        ZKUtils.showNotification('权重重置成功', 'success');
+                        loadWeightManagement();
+                    } else {
+                        throw new Error(result.message);
+                    }
+                })
+                .catch(error => {
+                    ZKUtils.showNotification('权重重置失败: ' + error.message, 'error');
+                });
+        }
+
+        function getWeightTypeLabel(type) {
+            const labels = {
+                'equal': '等权重',
+                'expert': '专家权重',
+                'seniority': '资历权重',
+                'custom': '自定义权重'
+            };
+            return labels[type] || type;
+        }
+
+        function getPhaseLabel(phase) {
+            const labels = {
+                'commit': '承诺阶段',
+                'scoring': '评分阶段',
+                'completed': '已完成',
+                'results': '结果公布',
+                'cancelled': '已取消'
+            };
+            return labels[phase] || phase;
+        }
+    </script>
+</body>
+</html>

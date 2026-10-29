@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>评分系统 - 零知识密封加权评审系统</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="vendor/sha3.min.js"></script>
+    <script src="vendor/zk/snarkjs.min.js"></script>
+    <script src="zk-crypto.js"></script>
+    <script src="zk-utils.js"></script>
+    <script src="app-shell.js" defer></script>
+</head>
+<body>
+    <div class="page-header">
+        <h1 class="page-title">评分系统</h1>
+        <p class="page-desc">基于 Pedersen 承诺的密封加权评分 · 承诺阶段保密，评分阶段验证</p>
+    </div>
+
+    <div id="loading" class="card">
+        <div class="loading">正在加载评分活动...</div>
+    </div>
+
+    <div id="errorMessage" class="card" style="display: none;">
+        <div class="status error">
+            <h3>加载失败</h3>
+            <p id="errorText"></p>
+            <button class="btn btn-secondary" onclick="window.location.href='dashboard.html'">返回仪表板</button>
+        </div>
+    </div>
+
+    <div id="scoreContent" style="display: none;">
+        <div class="card">
+            <h2 id="votingTitle"></h2>
+            <p id="votingDescription" class="voting-description"></p>
+            <div class="phase-info">
+                <span class="phase-badge" id="currentPhase">准备中</span>
+                <span>最高分: <strong id="maxScore">10</strong></span>
+                <span>候选人: <strong id="candidateCount">0</strong></span>
+                <span>您的权重: <strong id="userWeight">1.0</strong></span>
+                <span>承诺类型: <strong>Pedersen 承诺</strong></span>
+            </div>
+            <div id="participationStatus" class="status info" style="display: none; margin-top: 16px;">
+                <p id="participationMessage"></p>
+            </div>
+        </div>
+
+        <div id="commitPhase" class="card" style="display: none;">
+            <h3>提交 Pedersen 承诺</h3>
+            <div class="scoring-instructions">
+                <p><strong>Pedersen 承诺特性:</strong> 完美隐藏（信息论安全），绑定性基于 secp256k1 上的离散对数困难假设</p>
+                <p>为候选人评分并生成 Pedersen 承诺。承诺在您的浏览器本地计算，明文分数与密码不会上传服务器。</p>
+            </div>
+
+            <div id="commitCandidatesList" class="candidates-container"></div>
+
+            <div class="field">
+                <label for="commitSecret">承诺密码</label>
+                <input type="password" class="input" id="commitSecret" placeholder="设置验证密码（请记住此密码）" required>
+                <small class="field-hint">密文分数与密码只保存在本浏览器。清除站点数据或更换设备将导致无法揭晓，请务必牢记密码。</small>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="window.history.back()">返回</button>
+                <button class="btn" onclick="generateCommitment()" id="generateCommitmentBtn">
+                    <span id="generateText">生成 Pedersen 承诺</span>
+                    <span id="generateLoading" style="display: none;">生成中...</span>
+                </button>
+            </div>
+
+            <div id="commitmentResult" style="display: none; margin-top: 20px;">
+                <div class="status success">
+                    <h4>Pedersen 承诺生成成功</h4>
+                    <div class="commitment-details">
+                        <div class="detail-item">
+                            <strong>总体承诺哈希:</strong>
+                            <code id="commitmentHashDisplay" class="hash-display"></code>
+                        </div>
+                        <div class="detail-item">
+                            <strong>密码:</strong>
+                            <code id="commitSecretDisplay"></code>
+                        </div>
+                        <div class="detail-item">
+                            <strong>承诺类型:</strong>
+                            <span>Pedersen 承诺</span>
+                        </div>
+                        <div class="detail-item">
+                            <strong>范围证明:</strong>
+                            <span id="rangeProofStatus">待生成</span>
+                        </div>
+                        <div class="detail-item">
+                            <strong>安全级别:</strong>
+                            <span>信息论安全</span>
+                        </div>
+                    </div>
+                    <div class="status warning" style="margin-top: 12px;">
+                        <p><strong>重要:</strong> 明文分数与密码已存入本浏览器，请务必牢记密码；清除站点数据后只能重新评分。</p>
+                        <p><strong>安全特性:</strong> 完美隐藏意味着承诺点不泄露任何分数信息；绑定性依赖 secp256k1 离散对数困难假设。</p>
+                    </div>
+                    <button class="btn btn-success" onclick="submitCommitment()" id="submitCommitmentBtn" style="margin-top: 12px;">
+                        <span id="submitText">提交 Pedersen 承诺</span>
+                        <span id="submitLoading" style="display: none;">提交中...</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="scorePhase" class="card" style="display: none;">
+            <h3>验证 Pedersen 分数</h3>
+            <div class="scoring-instructions">
+                <p>使用承诺阶段的密码来验证并提交分数。请确保使用与提交承诺时相同的密码。</p>
+                <p><strong>Pedersen 验证:</strong> 通过零知识证明验证您的分数与承诺匹配，而无需暴露具体分数。</p>
+            </div>
+
+            <div id="localDataHint" class="status warning" style="display: none; margin-bottom: 16px;">
+                <p><strong>本浏览器没有该活动的评分明文</strong>（可能清除了站点数据或更换了设备）。</p>
+                <p>可通过其他评委的门限恢复找回评分材料，恢复成功后回到本页继续揭晓。</p>
+                <a class="btn btn-small btn-secondary" id="recoveryLink" href="#"
+                   style="margin-top: 8px;">去恢复中心找回</a>
+            </div>
+
+            <div id="userCommitmentInfo" class="status info" style="margin-bottom: 20px;">
+                <h4>您的承诺信息</h4>
+                <div class="commitment-details">
+                    <div class="detail-item">
+                        <strong>承诺类型:</strong>
+                        <span>Pedersen 承诺</span>
+                    </div>
+                    <div class="detail-item">
+                        <strong>总体承诺哈希:</strong>
+                        <code id="displayCommitmentHash" class="hash-display"></code>
+                    </div>
+                    <div class="detail-item">
+                        <strong>状态:</strong>
+                        <span id="commitmentStatus">等待 Pedersen 验证</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="scoreCandidatesList" class="candidates-container"></div>
+
+            <div class="field">
+                <label for="scoreSecret">承诺密码</label>
+                <input type="password" class="input" id="scoreSecret" placeholder="输入提交承诺时使用的密码" required>
+                <small class="field-hint">输入提交承诺时使用的相同密码。Pedersen 承诺确保只有知道密码的人才能验证承诺。</small>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="window.history.back()">返回</button>
+                <button class="btn" onclick="verifyAndSubmitScores()" id="verifyBtn">
+                    <span id="verifyText">验证并提交</span>
+                    <span id="verifyLoading" style="display: none;">验证中...</span>
+                </button>
+            </div>
+
+            <div id="verificationResult" style="display: none; margin-top: 20px;"></div>
+        </div>
+
+        <div id="resultsPhase" class="card" style="display: none;">
+            <h3>评审结果</h3>
+            <div class="status success">
+                <p>评审已结束，请查看最终结果。</p>
+                <p><strong>Pedersen 承诺:</strong> 您的评分隐私在整个过程中得到完美保护。</p>
+            </div>
+            <div class="form-actions">
+                <button class="btn" onclick="viewResults()">查看结果</button>
+                <button class="btn btn-secondary" onclick="window.location.href='dashboard.html'">返回仪表板</button>
+            </div>
+        </div>
+
+        <div id="cannotParticipate" class="card" style="display: none;">
+            <h3>无法参与</h3>
+            <div class="status error">
+                <p id="cannotParticipateMessage"></p>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="window.location.href='dashboard.html'">返回仪表板</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentVotingId = null;
+        let currentVotingData = null;
+        let currentUser = null;
+        let generatedCommitment = null;
+        let userCommitment = null;
+
+        // 阶段映射 - 统一前后端阶段定义
+        const PHASE_MAPPING = {
+            'commit': '承诺阶段',
+            'scoring': '评分阶段',
+            'completed': '已完成',
+            'cancelled': '已取消'
+        };
+
+        function getUrlParams() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('id');
+        }
+
+        async function checkAuth() {
+            if (!ZKUtils.isLoggedIn()) {
+                window.location.href = 'index.html';
+                return false;
+            }
+            return true;
+        }
+
+        async function loadScorePage() {
+            if (!await checkAuth()) return;
+
+            currentVotingId = getUrlParams();
+            if (!currentVotingId) {
+                showError('未指定投票活动ID');
+                return;
+            }
+
+            try {
+                console.log('加载评分页面，投票ID:', currentVotingId);
+
+                const userResult = await ZKUtils.getCurrentUser();
+                if (!userResult.success) throw new Error('获取用户信息失败');
+                currentUser = userResult.data;
+
+                console.log('当前用户:', currentUser.username);
+
+                const votingResult = await ZKUtils.getVotingById(currentVotingId);
+                if (!votingResult.success) throw new Error('投票活动不存在: ' + votingResult.message);
+                currentVotingData = votingResult.data;
+
+                console.log('投票数据:', {
+                    id: currentVotingData.id,
+                    title: currentVotingData.title,
+                    phase: currentVotingData.phase,
+                    voters: currentVotingData.voters?.length
+                });
+
+                // 检查用户是否有权参与
+                const participationResult = await checkParticipation();
+                console.log('参与检查结果:', participationResult);
+
+                // 加载用户承诺信息
+                await loadUserCommitment();
+
+                displayScorePage(participationResult);
+
+            } catch (error) {
+                console.error('加载评分页面错误:', error);
+                showError('加载失败: ' + error.message);
+            }
+        }
+
+        // 检查用户参与权限 - 修复版本
+async function checkParticipation() {
+    try {
+        console.log('检查用户参与权限...');
+        console.log('当前投票ID:', currentVotingId);
+
+        if (!currentVotingId || currentVotingId === 'undefined') {
+            console.error('投票ID无效:', currentVotingId);
+            return {
+                can_participate: false,
+                message: '投票ID无效',
+                phase: currentVotingData.phase
+            };
+        }
+
+        const result = await ZKUtils.apiCall(`/voting/${currentVotingId}/can-participate`);
+
+        console.log('权限检查响应:', result);
+
+        if (result.success) {
+            return {
+                can_participate: result.data.can_participate,
+                message: result.data.message,
+                phase: currentVotingData.phase
+            };
+        } else {
+            console.warn('权限检查失败:', result.message);
+            return {
+                can_participate: false,
+                message: result.message || '检查权限时发生错误',
+                phase: currentVotingData.phase
+            };
+        }
+    } catch (error) {
+        console.error('权限检查请求失败:', error);
+        return {
+            can_participate: false,
+            message: '检查权限时发生错误: ' + error.message,
+            phase: currentVotingData.phase
+        };
+    }
+}
+
+// 修复 loadScorePage 函数中的参数传递问题
+async function loadScorePage() {
+    if (!await checkAuth()) return;
+
+    // 优先从URL获取投票ID
+    currentVotingId = getUrlParams();
+
+    console.log('从URL获取投票ID:', currentVotingId);
+
+    if (!currentVotingId || currentVotingId === 'undefined' || currentVotingId === 'null') {
+        showError('未指定投票活动ID或ID无效');
+        return;
+    }
+
+    try {
+        const userResult = await ZKUtils.getCurrentUser();
+        if (!userResult.success) throw new Error('获取用户信息失败');
+        currentUser = userResult.data;
+
+        console.log('当前用户:', currentUser.username);
+
+        // 获取投票详情
+        console.log('获取投票详情:', currentVotingId);
+        const votingResult = await ZKUtils.getVotingById(currentVotingId);
+        if (!votingResult.success) throw new Error('投票活动不存在: ' + votingResult.message);
+        currentVotingData = votingResult.data;
+
+        console.log('投票数据:', {
+            id: currentVotingData.id,
+            title: currentVotingData.title,
+            phase: currentVotingData.phase,
+            voters: currentVotingData.voters?.length
+        });
+
+        // 检查用户是否有权参与
+        const participationResult = await checkParticipation();
+        console.log('参与检查结果:', participationResult);
+
+        // 加载用户承诺信息
+        await loadUserCommitment();
+
+        displayScorePage(participationResult);
+
+    } catch (error) {
+        console.error('加载评分页面错误:', error);
+        showError('加载失败: ' + error.message);
+    }
+}
+
+        async function loadUserCommitment() {
+            try {
+                console.log('加载用户承诺信息...');
+                const commitmentResult = await ZKUtils.apiCall(`/voting/${currentVotingId}/commitments/my`);
+
+                if (commitmentResult.success) {
+                    userCommitment = commitmentResult.data;
+                    console.log('找到用户承诺:', {
+                        commitment_type: userCommitment.commitment_type,
+                        commitment_hash: userCommitment.commitment_hash
+                    });
+                } else {
+                    userCommitment = null;
+                    console.log('用户没有提交承诺');
+                }
+            } catch (error) {
+                userCommitment = null;
+                console.error('加载用户承诺失败:', error);
+            }
+        }
+
+        function displayScorePage(participationData) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('errorMessage').style.display = 'none';
+            document.getElementById('scoreContent').style.display = 'block';
+
+            // 设置投票信息
+            document.getElementById('votingTitle').textContent = currentVotingData.title;
+            document.getElementById('votingDescription').textContent = currentVotingData.description || '无描述';
+            document.getElementById('maxScore').textContent = currentVotingData.max_score || 10;
+            document.getElementById('candidateCount').textContent = currentVotingData.candidates ? currentVotingData.candidates.length : 0;
+
+            // 获取用户权重
+            const userWeight = currentVotingData.voters ?
+                currentVotingData.voters.find(v => v.id === currentUser.id)?.weight || 1.0 : 1.0;
+            document.getElementById('userWeight').textContent = userWeight.toFixed(1);
+
+            // 显示参与状态
+            document.getElementById('participationStatus').style.display = 'block';
+            document.getElementById('participationMessage').textContent = participationData.message;
+
+            // 显示当前阶段 - 使用映射
+            const phase = currentVotingData.phase;
+            const phaseText = PHASE_MAPPING[phase] || phase;
+            document.getElementById('currentPhase').textContent = phaseText;
+            document.getElementById('currentPhase').className = `phase-badge ${phase}`;
+
+            console.log('页面显示设置完成:', {
+                phase: phase,
+                phaseText: phaseText,
+                canParticipate: participationData.can_participate,
+                message: participationData.message
+            });
+
+            if (!participationData.can_participate) {
+                console.log('用户无法参与，显示无法参与信息');
+                document.getElementById('cannotParticipate').style.display = 'block';
+                document.getElementById('cannotParticipateMessage').textContent = participationData.message;
+                return;
+            }
+
+            // 根据阶段显示不同内容
+            switch (phase) {
+                case 'commit':
+                    console.log('显示承诺阶段界面');
+                    showCommitPhase();
+                    break;
+                case 'scoring':
+                    console.log('显示评分阶段界面');
+                    showScorePhase();
+                    break;
+                case 'completed':
+                    console.log('显示结果界面');
+                    showResultsPhase();
+                    break;
+                default:
+                    console.warn('未知阶段:', phase);
+                    document.getElementById('cannotParticipate').style.display = 'block';
+                    document.getElementById('cannotParticipateMessage').textContent = '投票活动状态异常: ' + phase;
+            }
+        }
+
+        function showCommitPhase() {
+            console.log('渲染承诺阶段界面');
+            document.getElementById('commitPhase').style.display = 'block';
+            renderCommitCandidates();
+        }
+
+        async function showScorePhase() {
+            console.log('渲染评分阶段界面');
+            // 先加载用户承诺信息
+            await loadUserCommitment();
+
+            document.getElementById('scorePhase').style.display = 'block';
+            updateLocalDataHint();
+
+            if (userCommitment) {
+                console.log('显示用户承诺信息');
+                document.getElementById('displayCommitmentHash').textContent =
+                    userCommitment.commitment_hash || '无';
+                document.getElementById('commitmentStatus').textContent = 'Pedersen承诺已提交，等待验证';
+
+                // 根据承诺类型显示不同信息
+                const commitmentType = userCommitment.commitment_type || 'pedersen';
+                document.querySelector('#userCommitmentInfo .commitment-details').innerHTML += `
+                    <div class="detail-item">
+                        <strong>承诺类型:</strong>
+                        <span>${commitmentType.toUpperCase()}</span>
+                    </div>
+                `;
+
+                renderScoreCandidatesReadonly();
+            } else {
+                console.warn('用户没有承诺信息');
+                document.getElementById('userCommitmentInfo').innerHTML =
+                    '<div class="status error"><h4>未找到承诺信息</h4><p>您在承诺阶段未提交承诺，无法参与评分。</p></div>';
+                document.querySelector('#scorePhase .form-actions').style.display = 'none';
+            }
+        }
+
+        function showResultsPhase() {
+            console.log('显示结果界面');
+            document.getElementById('resultsPhase').style.display = 'block';
+        }
+
+        function renderCommitCandidates() {
+            const container = document.getElementById('commitCandidatesList');
+            if (!currentVotingData.candidates || currentVotingData.candidates.length === 0) {
+                container.innerHTML = '<div class="no-data">无候选人</div>';
+                return;
+            }
+
+            container.innerHTML = currentVotingData.candidates.map(candidate => `
+                <div class="scoring-item">
+                    <div class="candidate-info">
+                        <div class="candidate-name">${candidate.name}</div>
+                        <div class="candidate-id">ID: ${candidate.id}</div>
+                    </div>
+                    <div class="score-inputs">
+                        <input type="number" class="input score-input" id="commit-score-${candidate.id}"
+                              min="0" max="${currentVotingData.max_score}" value="0"
+                              onchange="validateScore(this)" required>
+                        <span class="score-unit">分</span>
+                    </div>
+                    <div class="score-validation" id="score-validation-${candidate.id}"></div>
+                </div>
+            `).join('');
+        }
+
+        function renderScoreCandidatesReadonly() {
+            const container = document.getElementById('scoreCandidatesList');
+            if (!currentVotingData.candidates || currentVotingData.candidates.length === 0) {
+                container.innerHTML = '<div class="no-data">无候选人</div>';
+                return;
+            }
+
+            let commitmentScores = [];
+            const localCommitment = loadLocalCommitment();
+            if (localCommitment && Array.isArray(localCommitment.scores)) {
+                commitmentScores = localCommitment.scores;
+            }
+
+            container.innerHTML = currentVotingData.candidates.map((candidate, index) => {
+                const score = commitmentScores[index] || 0;
+                return `
+                    <div class="scoring-item readonly">
+                        <div class="candidate-info">
+                            <div class="candidate-name">${candidate.name}</div>
+                            <div class="candidate-id">ID: ${candidate.id}</div>
+                        </div>
+                        <div class="score-display">
+                            <span class="score-value">${score}</span>
+                            <span class="score-unit">分</span>
+                        </div>
+                        <div class="score-status">
+                            <span class="status-badge locked">已锁定</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function validateScore(input) {
+            const score = parseInt(input.value);
+            const candidateId = input.id.replace('commit-score-', '');
+            const validationDiv = document.getElementById(`score-validation-${candidateId}`);
+
+            if (isNaN(score) || score < 0 || score > currentVotingData.max_score) {
+                validationDiv.innerHTML = `<span class="validation-error">分数必须在0-${currentVotingData.max_score}之间</span>`;
+                input.classList.add('is-invalid');
+                input.classList.remove('is-valid');
+            } else {
+                validationDiv.innerHTML = `<span class="validation-success">有效分数</span>`;
+                input.classList.remove('is-invalid');
+                input.classList.add('is-valid');
+            }
+        }
+
+        // ==================== v2 本地密封承诺 ====================
+        // 明文分数与 secret 只存在于本浏览器；服务器仅收到承诺点与承诺哈希。
+
+        function commitmentStorageKey() {
+            return `zkc:commit:${currentVotingId}:${currentUser.id}`;
+        }
+
+        function voterAddressForCommitment() {
+            if (currentUser.wallet_address) return currentUser.wallet_address;
+            return '0x' + String(currentUser.username || '').slice(0, 20).padEnd(20, '0');
+        }
+
+        function votingRefForCommitment() {
+            const chainId = currentVotingData.blockchain_id;
+            return (chainId === null || chainId === undefined) ? currentVotingData.id : chainId;
+        }
+
+        function loadLocalCommitment() {
+            try {
+                const raw = localStorage.getItem(commitmentStorageKey());
+                return raw ? JSON.parse(raw) : null;
+            } catch (e) {
+                console.warn('读取本地承诺失败:', e);
+                return null;
+            }
+        }
+
+        /* 评分阶段若本浏览器缺少明文，就地引导到恢复中心，而不是只弹一条 toast */
+        function updateLocalDataHint() {
+            const hint = document.getElementById('localDataHint');
+            if (!hint) return;
+            const local = loadLocalCommitment();
+            const missing = !local || !Array.isArray(local.scores) ||
+                local.salt === undefined || local.salt === null || local.salt === '';
+            hint.style.display = missing ? 'block' : 'none';
+            const link = document.getElementById('recoveryLink');
+            if (link) {
+                link.href = 'recovery.html?id=' + encodeURIComponent(currentVotingId || '');
+            }
+            return missing;
+        }
+
+        async function generateCommitment() {
+            const secret = document.getElementById('commitSecret').value;
+            if (!secret) {
+                alert('请输入承诺密码');
+                return;
+            }
+
+            if (secret.length < 6) {
+                alert('密码需要至少6个字符');
+                return;
+            }
+
+            const scores = [];
+            let hasError = false;
+
+            for (const candidate of currentVotingData.candidates) {
+                const scoreInput = document.getElementById(`commit-score-${candidate.id}`);
+                const score = parseInt(scoreInput.value);
+
+                if (isNaN(score) || score < 0 || score > currentVotingData.max_score) {
+                    const validationDiv = document.getElementById(`score-validation-${candidate.id}`);
+                    validationDiv.innerHTML = `<span class="validation-error">请为${candidate.name}输入有效分数(0-${currentVotingData.max_score})</span>`;
+                    scoreInput.classList.add('is-invalid');
+                    scoreInput.classList.remove('is-valid');
+                    hasError = true;
+                } else {
+                    scores.push(score);
+                }
+            }
+
+            if (hasError) {
+                alert('请在生成承诺前纠正所有分数错误');
+                return;
+            }
+
+            document.getElementById('generateText').style.display = 'none';
+            document.getElementById('generateLoading').style.display = 'inline';
+            document.getElementById('generateCommitmentBtn').disabled = true;
+
+            try {
+                if (typeof ZKCrypto === 'undefined') {
+                    throw new Error('本地密码学库未加载，请刷新页面后重试');
+                }
+
+                const payload = await ZKCrypto.buildCommitments({
+                    votingId: votingRefForCommitment(),
+                    voter: voterAddressForCommitment(),
+                    scores: scores,
+                    secret: secret,
+                    maxScore: currentVotingData.max_score
+                });
+
+                // 范围证明与 Pedersen 承诺并行生成：Groth16 在浏览器本地完成，
+                // 证明只暴露 Poseidon(scores, salt, voter) 与 maxScore，不泄露任何分数。
+                const salt = ZKCrypto.randomSalt();
+                let rangeProof = null;
+                let rangeError = null;
+                if (currentVotingData.blockchain_id !== null && currentVotingData.blockchain_id !== undefined) {
+                    try {
+                        rangeProof = await ZKCrypto.generateRangeProof({
+                            scores: scores,
+                            salt: salt,
+                            voter: voterAddressForCommitment(),
+                            maxScore: currentVotingData.max_score
+                        });
+                    } catch (e) {
+                        rangeError = e.message;
+                        console.warn('范围证明生成失败:', e);
+                    }
+                } else {
+                    rangeError = '该活动未上链，跳过范围证明';
+                }
+
+                generatedCommitment = {
+                    commitments: payload.commitments,
+                    commitment_hash: payload.commitmentHash,
+                    scores: scores,
+                    salt: salt,
+                    range_proof: rangeProof
+                };
+
+                // 明文分数、密码、salt 与证明只写入本浏览器存储：清除站点数据将导致无法揭晓
+                localStorage.setItem(commitmentStorageKey(), JSON.stringify({
+                    scores: scores,
+                    secret: secret,
+                    commitments: payload.commitments,
+                    commitment_hash: payload.commitmentHash,
+                    salt: salt,
+                    range_proof: rangeProof
+                }));
+
+                document.getElementById('commitmentResult').style.display = 'block';
+                document.getElementById('commitmentHashDisplay').textContent = payload.commitmentHash;
+                document.getElementById('commitSecretDisplay').textContent = secret;
+
+                const rangeStatusEl = document.getElementById('rangeProofStatus');
+                if (rangeStatusEl) {
+                    rangeStatusEl.textContent = rangeProof
+                        ? `已生成（承诺 ${rangeProof.commitment.slice(0, 18)}…）`
+                        : `未生成：${rangeError}`;
+                    rangeStatusEl.className = rangeProof ? '' : 'validation-error';
+                }
+
+                if (rangeProof) {
+                    ZKUtils.showNotification('Pedersen 承诺与范围证明已在本地生成，明文未上传服务器', 'success');
+                } else {
+                    ZKUtils.showNotification('Pedersen 承诺已生成，但范围证明未生成：' + rangeError, 'warning');
+                }
+            } catch (error) {
+                ZKUtils.showNotification('生成Pedersen承诺失败: ' + error.message, 'error');
+            } finally {
+                document.getElementById('generateText').style.display = 'inline';
+                document.getElementById('generateLoading').style.display = 'none';
+                document.getElementById('generateCommitmentBtn').disabled = false;
+            }
+        }
+
+        async function submitCommitment() {
+            if (!generatedCommitment) {
+                alert('请先生成Pedersen承诺');
+                return;
+            }
+
+            document.getElementById('submitText').style.display = 'none';
+            document.getElementById('submitLoading').style.display = 'inline';
+            document.getElementById('submitCommitmentBtn').disabled = true;
+
+            try {
+                // 只提交承诺点与承诺哈希（spec.md 第 6 节：明文不得离开浏览器）
+                const result = await ZKUtils.submitCommitment(currentVotingId, {
+                    commitments: generatedCommitment.commitments,
+                    commitment_hash: generatedCommitment.commitment_hash
+                });
+
+                if (result.success) {
+                    // Pedersen 承诺上链后，再把范围证明交给 relayer 代发（合约先校验承诺已存在）
+                    let rangeNote = '';
+                    if (generatedCommitment.range_proof) {
+                        const rp = generatedCommitment.range_proof;
+                        try {
+                            // P5（R-10）：范围证明必须由评委签名，签名绑定 commitment，
+                            // relayer 不能替换成别人的证明。
+                            const rangeDigestHex = '0x' + ZKCrypto.bytesToHex(ZKCrypto.rangeDigest(
+                                votingRefForCommitment(),
+                                voterAddressForCommitment(),
+                                rp.commitment
+                            ));
+                            const signed = await ZKUtils.signDigest(rangeDigestHex);
+                            const rangeResult = await ZKUtils.submitRangeProof(
+                                currentVotingId, rp.commitment, rp.proof,
+                                rangeDigestHex, signed.signature);
+                            if (rangeResult && rangeResult.success) {
+                                rangeNote = '，范围证明已上链';
+                            } else {
+                                ZKUtils.showNotification(
+                                    '范围证明上链失败：' + ((rangeResult && rangeResult.message) || '未知错误'), 'warning');
+                            }
+                        } catch (rangeError) {
+                            ZKUtils.showNotification(
+                                '范围证明签名/上链失败：' + rangeError.message, 'warning');
+                        }
+                    }
+                    ZKUtils.showNotification('Pedersen 承诺提交成功' + rangeNote + '!', 'success');
+
+                    // P3.10：承诺提交后引导登记门限恢复材料（材料只在本浏览器加密托管）
+                    const resultPanel = document.getElementById('commitmentResult');
+                    if (resultPanel && !document.getElementById('postCommitActions')) {
+                        const actions = document.createElement('div');
+                        actions.id = 'postCommitActions';
+                        actions.className = 'status info';
+                        actions.style.marginTop = '12px';
+                        actions.innerHTML = `
+                            <p>评分材料已保存在本浏览器。建议现在登记门限恢复材料：
+                               设备数据丢失时，可由其他评委协作找回。</p>
+                            <div class="form-actions" style="margin-top: 8px;">
+                                <a class="btn btn-small btn-secondary"
+                                   href="recovery.html?id=${encodeURIComponent(currentVotingId)}">
+                                    登记门限恢复材料
+                                </a>
+                                <button class="btn btn-small btn-ghost" type="button"
+                                        onclick="window.location.href='dashboard.html'">
+                                    返回仪表板
+                                </button>
+                            </div>`;
+                        resultPanel.appendChild(actions);
+                    }
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                ZKUtils.showNotification('提交Pedersen承诺失败: ' + error.message, 'error');
+            } finally {
+                document.getElementById('submitText').style.display = 'inline';
+                document.getElementById('submitLoading').style.display = 'none';
+                document.getElementById('submitCommitmentBtn').disabled = false;
+            }
+        }
+
+        async function verifyAndSubmitScores() {
+            if (!userCommitment) {
+                ZKUtils.showNotification('Pedersen承诺信息未找到', 'error');
+                return;
+            }
+
+            // v2：明文分数只保存在提交承诺的这台浏览器里
+            const local = loadLocalCommitment();
+            if (!local || !Array.isArray(local.scores)) {
+                updateLocalDataHint();
+                const hint = document.getElementById('localDataHint');
+                if (hint) hint.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                ZKUtils.showNotification(
+                    '本浏览器没有该活动的评分明文，无法揭晓。可使用门限恢复找回', 'error');
+                return;
+            }
+
+            const secret = document.getElementById('scoreSecret').value;
+            if (!secret) {
+                alert('请输入Pedersen承诺密码');
+                return;
+            }
+
+            const scoresForVerification = local.scores;
+
+            // salt 是范围证明 Poseidon 承诺的盲化因子，链上揭晓时用于比对 rangeCommitments
+            if (local.salt === undefined || local.salt === null || local.salt === '') {
+                updateLocalDataHint();
+                const hint = document.getElementById('localDataHint');
+                if (hint) hint.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                ZKUtils.showNotification(
+                    '本浏览器缺少范围证明的 salt，无法完成链上揭晓。可使用门限恢复找回', 'error');
+                return;
+            }
+
+            document.getElementById('verifyText').style.display = 'none';
+            document.getElementById('verifyLoading').style.display = 'inline';
+            document.getElementById('verifyBtn').disabled = true;
+
+            try {
+                // 直接调用验证函数，系统会自动处理Pedersen承诺
+                const result = await ZKUtils.verifyCommitment(currentVotingId, {
+                    scores: scoresForVerification,
+                    secret: secret,
+                    salt: local.salt
+                });
+
+                if (result.success && result.data.is_valid) {
+                    ZKUtils.showNotification('Pedersen承诺验证成功！分数已自动提交', 'success');
+                    setTimeout(() => window.location.href = 'dashboard.html', 2000);
+                } else {
+                    const errorMsg = result.data?.message || '请检查密码和分数是否与提交Pedersen承诺时一致';
+                    ZKUtils.showNotification('Pedersen承诺验证失败: ' + errorMsg, 'error');
+
+                    const resultDiv = document.getElementById('verificationResult');
+                    resultDiv.style.display = 'block';
+                    resultDiv.innerHTML = `
+                        <div class="status warning">
+                            <h4>Pedersen验证失败</h4>
+                            <div class="debug-info">
+                                <p><strong>存储的承诺哈希:</strong> <code class="hash-display">${userCommitment.commitment_hash}</code></p>
+                                <p><strong>存储的分数:</strong> ${JSON.stringify(scoresForVerification)}</p>
+                                <p><strong>最大分数:</strong> ${currentVotingData.max_score}</p>
+                                <p><strong>承诺类型:</strong> ${userCommitment.commitment_type || 'pedersen'}</p>
+                            </div>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                ZKUtils.showNotification('Pedersen承诺验证失败: ' + error.message, 'error');
+            } finally {
+                document.getElementById('verifyText').style.display = 'inline';
+                document.getElementById('verifyLoading').style.display = 'none';
+                document.getElementById('verifyBtn').disabled = false;
+            }
+        }
+
+        function viewResults() {
+            window.location.href = `results.html?id=${currentVotingId}`;
+        }
+
+        function showError(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('errorMessage').style.display = 'block';
+            document.getElementById('errorText').textContent = message;
+        }
+
+        window.addEventListener('load', loadScorePage);
+    </script>
+</body>
+</html>
